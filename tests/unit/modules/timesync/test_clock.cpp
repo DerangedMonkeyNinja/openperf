@@ -11,10 +11,6 @@
 using namespace openperf::timesync;
 using namespace std::chrono_literals;
 
-namespace openperf::timesync::counter {
-std::atomic<timecounter*> timecounter_now = nullptr;
-}
-
 static constexpr std::string_view clock_data = "data/clock_test_data.csv";
 
 using timecounter_vector = std::vector<std::unique_ptr<counter::timecounter>>;

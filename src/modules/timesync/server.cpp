@@ -9,10 +9,6 @@
 #include "timesync/server.hpp"
 #include "utils/overloaded_visitor.hpp"
 
-namespace openperf::timesync::counter {
-std::atomic<timecounter*> timecounter_now = nullptr;
-}
-
 namespace openperf::timesync::api {
 
 static time_counter to_timecounter(const counter::timecounter& tc)

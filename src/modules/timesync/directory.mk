@@ -8,6 +8,7 @@ TS_SOURCES += \
 	api_transmogrify.cpp \
 	chrono.cpp \
 	clock.cpp \
+	counter.cpp \
 	counter_system.cpp \
 	init.cpp \
 	handler.cpp \
@@ -34,5 +35,6 @@ TS_TEST_DEPENDS += digestible expected framework
 
 TS_TEST_SOURCES += \
 	clock.cpp \
+	counter.cpp \
 	counter_system.cpp \
 	history.cpp
