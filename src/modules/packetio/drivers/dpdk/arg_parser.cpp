@@ -1,6 +1,8 @@
 #include <unordered_map>
 #include <regex>
 
+#include "tl/expected.hpp"
+
 #include "core/op_core.h"
 #include "config/op_config_file.hpp"
 #include "config/op_config_prefix.hpp"
@@ -55,43 +57,47 @@ static void add_no_pci_arg(std::vector<std::string>& args)
     args.emplace_back(no_pci_arg);
 }
 
-// Split portX and return just the X part.
-// Return -1 if no valid X part is found.
-static int get_port_index(std::string_view name)
+static std::optional<uint16_t> to_uint16(std::string_view input)
 {
-    auto index_offset = name.find_first_not_of("port");
-    if (index_offset == std::string_view::npos) { return (-1); }
-
-    char* last_char;
-    auto to_return = strtol(name.data() + index_offset, &last_char, 10);
-    if (*last_char == '\0') { return (to_return); }
-
-    return (-1);
+    std::stringstream ss(std::string(input), std::ios_base::in);
+    uint16_t out;
+    if ((ss >> out).fail()) { return (std::nullopt); }
+    return (out);
 }
 
-static int
-process_dpdk_port_ids(const std::map<std::string, std::string>& input,
-                      std::unordered_map<int, std::string>& output)
+// Split portX and return just the X part.
+// Return -1 if no valid X part is found.
+static std::optional<uint16_t> get_port_index(std::string_view name)
 {
+    auto index_offset = name.find_first_not_of("port");
+    if (index_offset == std::string_view::npos) { return (std::nullopt); }
+
+    return (to_uint16(name.substr(
+        index_offset, name.find_first_not_of("0123456789", index_offset + 1))));
+}
+
+static tl::expected<std::map<uint16_t, std::string>, std::string>
+process_dpdk_port_ids(const std::map<std::string, std::string>& input)
+{
+    auto output = std::map<uint16_t, std::string>{};
+
     for (auto& entry : input) {
         // split port index from "port" part.
         auto port_idx = get_port_index(entry.first);
-        if (port_idx < 0) {
-            std::cerr << std::string(entry.first)
-                             + " is not a valid port id specifier."
-                             + " It must have the form portX=id,"
-                             + " where X is the zero-based DPDK port index and"
-                             + " where id may only contain"
-                             + " lower-case letters, numbers, and hyphens."
-                      << std::endl;
-            return (EINVAL);
+        if (!port_idx) {
+            return (tl::make_unexpected(
+                std::string(entry.first) + " is not a valid port id specifier."
+                + " It must have the form portX=id,"
+                + " where X is the zero-based DPDK port index and"
+                + " where id may only contain"
+                + " lower-case letters, numbers, and hyphens."));
         }
 
         // check for duplicate port index.
-        if (output.find(port_idx) != output.end()) {
-            std::cerr << "Error: detected a duplicate port index: " << port_idx
-                      << std::endl;
-            return (EINVAL);
+        if (output.find(*port_idx) != output.end()) {
+            return (
+                tl::make_unexpected("Error: detected a duplicate port index: "
+                                    + std::to_string(*port_idx)));
         }
 
         // check for duplicate port ID.
@@ -103,18 +109,17 @@ process_dpdk_port_ids(const std::map<std::string, std::string>& input,
                              return val.second == port_id;
                          });
         if (it != output.end()) {
-            std::cerr << "Error: detected a duplicate port id: " << port_id
-                      << std::endl;
-            return (EINVAL);
+            return (tl::make_unexpected("Error: detected a duplicate port id: "
+                                        + port_id));
         }
 
-        output[port_idx] = port_id;
+        output[*port_idx] = port_id;
     }
 
-    return (0);
+    return (output);
 }
 
-int dpdk_test_portpairs()
+unsigned dpdk_test_portpairs()
 {
     auto result = config::file::op_config_get_param<OP_OPTION_TYPE_LONG>(
         "modules.packetio.dpdk.test-portpairs");
@@ -151,12 +156,11 @@ std::vector<std::string> dpdk_args()
     // Add name value in straight away.
     std::vector<std::string> to_return{std::string(program_name)};
 
-    // Get the list from the framework.
-    auto arg_list = config::file::op_config_get_param<OP_OPTION_TYPE_LIST>(
-        "modules.packetio.dpdk.options");
-    if (arg_list) {
-        // Walk through it and rebuild the arguments DPDK expects
-        for (auto& v : *arg_list) { add_dpdk_argument(to_return, v); }
+    // Get the DPDK options from the framework.
+    if (auto args = config::file::op_config_get_param<OP_OPTION_TYPE_OPTIONS>(
+            "modules.packetio.dpdk.options")) {
+        // Walk through them and rebuild the arguments DPDK expects
+        for (auto&& arg : *args) { add_dpdk_argument(to_return, arg); }
     }
 
     /* Append a log level option if needed */
@@ -175,51 +179,123 @@ std::vector<std::string> dpdk_args()
     return (to_return);
 }
 
-std::unordered_map<int, std::string> dpdk_id_map()
+std::map<uint16_t, std::string> dpdk_id_map()
 {
     auto src_map = config::file::op_config_get_param<OP_OPTION_TYPE_MAP>(
         "modules.packetio.dpdk.port-ids");
 
-    std::unordered_map<int, std::string> to_return;
+    if (!src_map) { return (std::map<uint16_t, std::string>{}); }
 
-    if (!src_map) { return (to_return); }
-
-    if (process_dpdk_port_ids(*src_map, to_return) != 0) {
-        throw std::runtime_error(
-            "Error mapping DPDK Port Indexes to Port IDs.");
+    auto to_return = process_dpdk_port_ids(*src_map);
+    if (!to_return) {
+        throw std::runtime_error("Could not process port id map: "
+                                 + to_return.error());
     }
 
-    return (to_return);
+    return (*to_return);
+}
+
+static std::vector<uint16_t> parse_queues(std::string_view input)
+{
+    static constexpr auto delimiters = ",-";
+    auto queues = std::vector<uint16_t>{};
+    auto tmp = std::stack<uint16_t>{};
+
+    size_t cursor = 0, end = 0;
+    while ((cursor = input.find_first_not_of(delimiters, end))
+           != std::string::npos) {
+        end = input.find_first_of(delimiters, cursor + 1);
+
+        if (auto value = to_uint16(input.substr(cursor, end - cursor))) {
+            if (end > input.length()) { /* no more input */
+                if (tmp.empty()) {
+                    queues.push_back(*value);
+                } else {
+                    for (uint16_t i = tmp.top(); i <= *value; i++) {
+                        queues.push_back(i);
+                    }
+                    tmp.pop();
+                }
+            } else { /* check delimiter */
+                switch (input[end]) {
+                case '-':
+                    tmp.push(*value);
+                    break;
+                case ',':
+                    queues.push_back(*value);
+                    break;
+                default:
+                    throw std::invalid_argument("Invalid queue syntax");
+                }
+            }
+        }
+    }
+
+    return (queues);
+}
+
+static std::map<uint16_t, std::vector<uint16_t>>
+get_port_queues(std::string_view opt_name)
+{
+    auto map = std::map<uint16_t, std::vector<uint16_t>>{};
+
+    auto opt_arg =
+        config::file::op_config_get_param<OP_OPTION_TYPE_MAP>(opt_name);
+
+    if (!opt_arg) { return (map); }
+
+    for (auto&& pair : *opt_arg) {
+        if (auto port_idx = get_port_index(pair.first)) {
+            map[*port_idx] = parse_queues(pair.second);
+        }
+    }
+
+    return (map);
+}
+
+std::map<uint16_t, std::vector<uint16_t>> rx_port_queues()
+{
+    assert(rte_eal_process_type() == RTE_PROC_SECONDARY);
+    return (get_port_queues("modules.packetio.dpdk.secondary.rx-port-queues"));
+}
+
+std::map<uint16_t, std::vector<uint16_t>> tx_port_queues()
+{
+    assert(rte_eal_process_type() == RTE_PROC_SECONDARY);
+    return (get_port_queues("modules.packetio.dpdk.secondary.tx-port-queues"));
+}
+
+static std::optional<model::core_mask> get_core_mask(std::string_view opt_name)
+{
+    auto mask = config::file::op_config_get_param<OP_OPTION_TYPE_HEX>(opt_name);
+
+    if (mask) { return (model::core_mask{*mask}); }
+
+    return (std::nullopt);
 }
 
 std::optional<model::core_mask> misc_core_mask()
 {
-    const auto mask = config::file::op_config_get_param<OP_OPTION_TYPE_HEX>(
-        "modules.packetio.dpdk.misc-worker-mask");
-
-    if (mask) { return model::core_mask{*mask}; }
-
-    return (std::nullopt);
+    return (get_core_mask("modules.packetio.dpdk.misc-worker-mask"));
 }
 
 std::optional<model::core_mask> rx_core_mask()
 {
-    const auto mask = config::file::op_config_get_param<OP_OPTION_TYPE_HEX>(
-        "modules.packetio.dpdk.rx-worker-mask");
-
-    if (mask) { return model::core_mask{*mask}; }
-
-    return (std::nullopt);
+    return (get_core_mask("modules.packetio.dpdk.rx-worker-mask"));
 }
 
 std::optional<model::core_mask> tx_core_mask()
 {
-    const auto mask = config::file::op_config_get_param<OP_OPTION_TYPE_HEX>(
-        "modules.packetio.dpdk.tx-worker-mask");
+    return (get_core_mask("modules.packetio.dpdk.tx-worker-mask"));
+}
 
-    if (mask) { return model::core_mask{*mask}; }
-
-    return (std::nullopt);
+bool rx_interrupts()
+{
+    auto result =
+        openperf::config::file::op_config_get_param<OP_OPTION_TYPE_NONE>(
+            "modules.packetio.dpdk.no-rx-interrupts");
+    /* XXX: A negative times a negative equals a positive. Say it! */
+    return (!result.value_or(false));
 }
 
 } /* namespace openperf::packetio::dpdk::config */

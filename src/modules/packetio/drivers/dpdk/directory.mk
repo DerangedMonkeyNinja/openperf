@@ -1,4 +1,14 @@
-PIO_DEPENDS += dpdk timesync spirent_pga
+OP_PACKETIO_DPDK_FLAVOR ?= primary
+
+PIO_DEPENDS += dpdk_proc_shim timesync spirent_pga
+
+###
+# DPDK Hack.
+# This should really come from the dpdk.mk include, but that will require some
+# clever makefile hackery... Just do this for now.
+# DPDK users the keyword register, which isn't c++17 compliant
+###
+PIO_FLAGS += -Wno-register
 
 PIO_DRIVER_SOURCES += \
 	arg_parser.cpp \
@@ -29,3 +39,5 @@ PIO_DRIVER_SOURCES += \
 $(PIO_OBJ_DIR)/drivers/dpdk/mbuf_rx_prbs.o: OP_CPPFLAGS += -Wno-deprecated-declarations
 $(PIO_OBJ_DIR)/drivers/dpdk/mbuf_signature.o: OP_CPPFLAGS += -Wno-deprecated-declarations
 $(PIO_OBJ_DIR)/drivers/dpdk/mbuf_tx.o: OP_CPPFLAGS += -Wno-deprecated-declarations
+
+$(PIO_OBJ_DIR)/drivers/dpdk/eal.o: OP_CPPFLAGS += -Wno-deprecated-declarations

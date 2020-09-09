@@ -15,7 +15,7 @@ class pool_allocator
 {
 public:
     pool_allocator(const std::vector<model::port_info>&,
-                   const std::map<int, queue::count>&);
+                   const std::map<uint16_t, queue::count>&);
 
     rte_mempool* rx_mempool(unsigned socket_id) const;
 

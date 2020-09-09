@@ -4,7 +4,7 @@
 #include <net/if.h>
 
 #include "core/op_core.h"
-#include "config/op_config_file.hpp"
+#include "packetio/drivers/dpdk/arg_parser.hpp"
 #include "packetio/drivers/dpdk/dpdk.h"
 #include "packetio/drivers/dpdk/model/port_info.hpp"
 
@@ -138,31 +138,54 @@ uint16_t port_info::rx_queue_count() const
 
 uint16_t port_info::rx_queue_max() const
 {
-    return (get_info_field(m_id, &rte_eth_dev_info::max_rx_queues));
+    if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+        return (get_info_field(m_id, &rte_eth_dev_info::max_rx_queues));
+    }
+
+    return (rx_queue_count());
 }
 
 uint16_t port_info::rx_queue_default() const
 {
-    return (std::max(
-        1_S,
-        get_info_field(m_id, &rte_eth_dev_info::default_rxportconf).nb_queues));
+    if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+        return (
+            std::max(1_S,
+                     get_info_field(m_id, &rte_eth_dev_info::default_rxportconf)
+                         .nb_queues));
+    }
+
+    return (rx_queue_count());
 }
 
 uint16_t port_info::tx_queue_count() const
 {
-    return (get_info_field(m_id, &rte_eth_dev_info::nb_tx_queues));
+    if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+        return (get_info_field(m_id, &rte_eth_dev_info::nb_tx_queues));
+    }
+
+    auto port_queues = config::tx_port_queues();
+    return (port_queues.count(m_id) ? port_queues[m_id].size() : 0);
 }
 
 uint16_t port_info::tx_queue_max() const
 {
-    return (get_info_field(m_id, &rte_eth_dev_info::max_tx_queues));
+    if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+        return (get_info_field(m_id, &rte_eth_dev_info::max_tx_queues));
+    }
+
+    return (tx_queue_count());
 }
 
 uint16_t port_info::tx_queue_default() const
 {
-    return (std::max(
-        1_S,
-        get_info_field(m_id, &rte_eth_dev_info::default_txportconf).nb_queues));
+    if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+        return (
+            std::max(1_S,
+                     get_info_field(m_id, &rte_eth_dev_info::default_txportconf)
+                         .nb_queues));
+    }
+
+    return (tx_queue_count());
 }
 
 uint16_t port_info::rx_desc_count() const
@@ -208,11 +231,7 @@ bool port_info::rxq_interrupt() const
      * everything, unless the user says otherwise.  Run-time errors will disable
      * them.
      */
-    static auto result =
-        openperf::config::file::op_config_get_param<OP_OPTION_TYPE_NONE>(
-            "modules.packetio.dpdk.no-rx-interrupts");
-    /* XXX: A negative times a negative equals a positive. Say it! */
-    return (!result.value_or(false));
+    return (config::rx_interrupts());
 }
 
 } // namespace openperf::packetio::dpdk::model

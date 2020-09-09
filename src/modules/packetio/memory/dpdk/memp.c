@@ -104,7 +104,7 @@ static struct rte_mempool* load_mempool(atomic_mempool_ptr mpools[],
     return (atomic_load_explicit(&mpools[idx], memory_order_relaxed));
 }
 
-void memp_init()
+void memp_init_primary()
 {
     /*
      * Make sure that our mempool arrays are populated with a mempool for
@@ -114,6 +114,25 @@ void memp_init()
         memp_default_mempool_fmt, memp_default_mempools, RTE_MAX_NUMA_NODES);
     initialize_mempools(
         memp_ref_rom_mempool_fmt, memp_ref_rom_mempools, RTE_MAX_NUMA_NODES);
+}
+
+void memp_init_secondary()
+{
+    struct rte_mempool* pool = rte_mempool_lookup("mbuf_pool");
+    assert(pool);
+
+    for (size_t i = 0; i < RTE_MAX_NUMA_NODES; i++) {
+        atomic_store_explicit(
+            &memp_default_mempools[i], pool, memory_order_relaxed);
+        atomic_store_explicit(
+            &memp_ref_rom_mempools[i], pool, memory_order_relaxed);
+    }
+}
+
+void memp_init()
+{
+    rte_eal_process_type() == RTE_PROC_PRIMARY ? memp_init_primary()
+                                               : memp_init_secondary();
 
     /* Initialize stats, maybe */
     for (unsigned i = 0; i < LWIP_ARRAYSIZE(memp_pools); i++) {

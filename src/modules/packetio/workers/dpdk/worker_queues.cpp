@@ -12,9 +12,9 @@ void port_queues::setup(std::any fib,
     assert(m_queues.empty());
     m_queues.reserve(RTE_MAX_ETHPORTS);
 
-    for (auto& [idx, queue_count] : queue::get_port_queue_counts(descriptors)) {
+    for (auto&& [idx, queue_ids] : queue::get_port_queue_map(descriptors)) {
         m_queues.emplace(
-            begin(m_queues) + idx, idx, queue_count.rx, queue_count.tx);
+            begin(m_queues) + idx, idx, queue_ids.rx, queue_ids.tx);
     }
 }
 

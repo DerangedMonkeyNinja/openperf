@@ -16,6 +16,11 @@ namespace openperf::packetio::dpdk::topology {
 unsigned get_stack_lcore_id();
 
 /**
+ * Retrieve a port info vector for the current environment
+ */
+std::vector<model::port_info> get_port_info();
+
+/**
  * Generate a vector of queue descriptors based on the specified
  * port configuration.  This distribution takes into account the
  * number of available cores, their numa node/socket id, and
@@ -23,6 +28,11 @@ unsigned get_stack_lcore_id();
  */
 std::vector<queue::descriptor>
 queue_distribute(const std::vector<model::port_info>& port_info);
+
+/**
+ * Same as above, but for all ports in the environment.
+ */
+std::vector<queue::descriptor> queue_distribute();
 
 /**
  * Determine the most common NUMA node connected to the most ports

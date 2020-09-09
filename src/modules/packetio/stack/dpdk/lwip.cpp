@@ -7,7 +7,6 @@
 
 #include "core/op_core.h"
 #include "packetio/drivers/dpdk/dpdk.h"
-#include "packetio/drivers/dpdk/topology_utils.hpp"
 #include "packetio/memory/dpdk/memp.h"
 #include "packetio/stack/dpdk/lwip.hpp"
 #include "packetio/stack/dpdk/tcpip_mbox.hpp"

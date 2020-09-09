@@ -4,6 +4,7 @@
 #include <any>
 #include <memory>
 #include <optional>
+#include <typeindex>
 #include <vector>
 
 #include "tl/expected.hpp"
@@ -49,6 +50,15 @@ public:
 
     void stop_all_ports() { return m_self->stop_all_ports(); }
 
+    template <typename Driver> Driver& get() const
+    {
+        if (std::type_index(typeid(Driver))
+            == std::type_index(m_self->type_info())) {
+            return (static_cast<driver_model<Driver>&>(*m_self).m_driver);
+        }
+        throw std::bad_cast();
+    }
+
 private:
     struct driver_concept
     {
@@ -63,6 +73,7 @@ private:
         delete_port(std::string_view id) = 0;
         virtual void start_all_ports() = 0;
         virtual void stop_all_ports() = 0;
+        virtual const std::type_info& type_info() const = 0;
     };
 
     template <typename Driver> struct driver_model final : driver_concept
@@ -103,6 +114,11 @@ private:
         void start_all_ports() override { return m_driver.start_all_ports(); }
 
         void stop_all_ports() override { return m_driver.stop_all_ports(); }
+
+        const std::type_info& type_info() const override
+        {
+            return (typeid(Driver));
+        }
 
         Driver m_driver;
     };

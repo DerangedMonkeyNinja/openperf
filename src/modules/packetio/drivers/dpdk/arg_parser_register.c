@@ -7,7 +7,7 @@ MAKE_OPTION_DATA(
     MAKE_OPT("quoted, comma separated options for DPDK",
              "modules.packetio.dpdk.options",
              'd',
-             OP_OPTION_TYPE_LIST),
+             OP_OPTION_TYPE_OPTIONS),
     MAKE_OPT("enable test mode by creating loopback port pairs",
              "modules.packetio.dpdk.test-mode",
              0,
@@ -16,9 +16,19 @@ MAKE_OPTION_DATA(
              "modules.packetio.dpdk.test-portpairs",
              0,
              OP_OPTION_TYPE_LONG),
-    MAKE_OPT("quoted, comma separated list of port index-id mappings in the "
+    MAKE_OPT("comma separated list of port index-id mappings in the "
              "form portX=id",
              "modules.packetio.dpdk.port-ids",
+             0,
+             OP_OPTION_TYPE_MAP),
+    MAKE_OPT("comma separated list or dashed range of port transmit queues "
+             "in the form portX=x,y-z",
+             "modules.packetio.dpdk.secondary.rx-port-queues",
+             0,
+             OP_OPTION_TYPE_MAP),
+    MAKE_OPT("comma separated list or dashed range of port receive queues "
+             "in the form portX=x,y-z",
+             "modules.packetio.dpdk.secondary.tx-port-queues",
              0,
              OP_OPTION_TYPE_MAP),
     MAKE_OPT("disable receive queue interrupts",

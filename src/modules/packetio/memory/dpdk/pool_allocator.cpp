@@ -4,6 +4,7 @@
 #include "lwip/pbuf.h"
 
 #include "core/op_core.h"
+#include "dpdk_proc_shim/api.h"
 #include "packetio/drivers/dpdk/dpdk.h"
 #include "packetio/drivers/dpdk/model/port_info.hpp"
 #include "packetio/memory/dpdk/memp.h"
@@ -86,7 +87,7 @@ static rte_mempool* create_pbuf_mempool(
     size_t nb_mbufs = op_min(131072, pool_size_adjust(op_max(1024U, size)));
 
     rte_mempool* mp =
-        rte_pktmbuf_pool_create_by_ops(name,
+        dps_pktmbuf_pool_create_by_ops(name,
                                        nb_mbufs,
                                        cached ? get_cache_size(nb_mbufs) : 0,
                                        PBUF_PRIVATE_SIZE,
@@ -105,7 +106,7 @@ static rte_mempool* create_pbuf_mempool(
 }
 
 pool_allocator::pool_allocator(const std::vector<model::port_info>& info,
-                               const std::map<int, queue::count>& q_counts)
+                               const std::map<uint16_t, queue::count>& q_counts)
 {
     /* Base default pool size on the number and types of ports on each NUMA node
      */

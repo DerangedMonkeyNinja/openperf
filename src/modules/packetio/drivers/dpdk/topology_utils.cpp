@@ -4,9 +4,9 @@
 #include <set>
 #include <vector>
 
+#include "core/op_log.h"
 #include "packetio/drivers/dpdk/arg_parser.hpp"
 #include "packetio/drivers/dpdk/topology_utils.hpp"
-#include "core/op_log.h"
 
 namespace openperf::packetio::dpdk::topology {
 
@@ -23,6 +23,18 @@ static model::core_mask dpdk_mask()
     return (mask);
 }
 
+std::vector<model::port_info> get_port_info()
+{
+    auto info = std::vector<model::port_info>{};
+
+    uint16_t port_id = 0;
+    RTE_ETH_FOREACH_DEV (port_id) {
+        info.emplace_back(port_id);
+    }
+
+    return (info);
+}
+
 /*
  * Distribute port queues to workers while taking into account NUMA
  * relationships.  This is a simple and probably non-optimal solution to the
@@ -30,8 +42,8 @@ static model::core_mask dpdk_mask()
  * node instance.  But if a user chooses not to do that, this will at least
  * allow everything to work.
  */
-std::vector<queue::descriptor>
-queue_distribute(const std::vector<model::port_info>& port_info)
+static std::vector<queue::descriptor>
+index_queue_distribute(const std::vector<model::port_info>& port_info)
 {
     /* If we have multiple cores, assign the stack to a dedicated one. */
     unsigned stack_lcore =
@@ -138,6 +150,62 @@ queue_distribute(const std::vector<model::port_info>& port_info)
     }
 
     return (descriptors);
+}
+
+static std::vector<queue::descriptor>
+translate_port_queue_ids(const std::vector<queue::descriptor>& input)
+{
+    const auto tx_port_queues = config::tx_port_queues();
+
+    const auto contains_queue = [](const auto& q_map, uint16_t p, uint16_t q) {
+        return (q_map.size() > p && q_map.at(p).size() > q);
+    };
+
+    auto tmp = std::vector<queue::descriptor>{};
+    std::copy_if(
+        std::begin(input),
+        std::end(input),
+        std::back_inserter(tmp),
+        [&](const auto& d) {
+            assert(d.direction != queue::queue_direction::NONE);
+
+            return (d.direction == queue::queue_direction::RX
+                    || contains_queue(tx_port_queues, d.port_id, d.queue_id));
+        });
+
+    auto output = std::vector<queue::descriptor>{};
+    std::transform(
+        std::begin(tmp),
+        std::end(tmp),
+        std::back_inserter(output),
+        [&](const auto& d) {
+            assert(d.direction != queue::queue_direction::NONE);
+
+            return (queue::descriptor{
+                .worker_id = d.worker_id,
+                .port_id = d.port_id,
+                .queue_id = (d.direction == queue::queue_direction::RX
+                                 ? d.queue_id
+                                 : tx_port_queues.at(d.port_id)[d.queue_id]),
+                .direction = d.direction});
+        });
+
+    return (output);
+}
+
+std::vector<queue::descriptor>
+queue_distribute(const std::vector<model::port_info>& port_info)
+{
+    auto q_descriptors = index_queue_distribute(port_info);
+
+    return (rte_eal_process_type() == RTE_PROC_PRIMARY
+                ? q_descriptors
+                : translate_port_queue_ids(q_descriptors));
+}
+
+std::vector<queue::descriptor> queue_distribute()
+{
+    return (queue_distribute(get_port_info()));
 }
 
 static model::core_mask get_misc_mask()

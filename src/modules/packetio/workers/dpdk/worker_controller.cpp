@@ -4,7 +4,6 @@
 
 #include "core/op_core.h"
 #include "packetio/drivers/dpdk/dpdk.h"
-#include "packetio/drivers/dpdk/model/physical_port.hpp"
 #include "packetio/drivers/dpdk/model/port_info.hpp"
 #include "packetio/drivers/dpdk/topology_utils.hpp"
 #include "packetio/stack/dpdk/net_interface.hpp"
@@ -55,20 +54,14 @@ static std::vector<worker::descriptor> to_worker_descriptors(
 {
     std::vector<worker::descriptor> worker_items;
 
-    for (auto& d : descriptors) {
-        assert(d.mode != queue::queue_mode::NONE);
-        switch (d.mode) {
-        case queue::queue_mode::RX:
+    for (const auto& d : descriptors) {
+        assert(d.direction != queue::queue_direction::NONE);
+        switch (d.direction) {
+        case queue::queue_direction::RX:
             worker_items.emplace_back(d.worker_id,
                                       queues[d.port_id].rx(d.queue_id));
             break;
-        case queue::queue_mode::TX:
-            worker_items.emplace_back(d.worker_id,
-                                      queues[d.port_id].tx(d.queue_id));
-            break;
-        case queue::queue_mode::RXTX:
-            worker_items.emplace_back(d.worker_id,
-                                      queues[d.port_id].rx(d.queue_id));
+        case queue::queue_direction::TX:
             worker_items.emplace_back(d.worker_id,
                                       queues[d.port_id].tx(d.queue_id));
             break;
@@ -77,7 +70,7 @@ static std::vector<worker::descriptor> to_worker_descriptors(
         }
     }
 
-    for (auto& sched_ptr : tx_schedulers) {
+    for (const auto& sched_ptr : tx_schedulers) {
         auto idx = tx_workers.at(
             std::make_pair(sched_ptr->port_id(), sched_ptr->queue_id()));
         worker_items.emplace_back(idx, sched_ptr.get());
@@ -86,22 +79,9 @@ static std::vector<worker::descriptor> to_worker_descriptors(
     return (worker_items);
 }
 
-static std::vector<model::port_info> get_port_info()
-{
-    uint16_t port_id = 0;
-    std::vector<model::port_info> port_info;
-    RTE_ETH_FOREACH_DEV (port_id) {
-        port_info.emplace_back(model::port_info(port_id));
-    }
-
-    return (port_info);
-}
-
 static std::vector<queue::descriptor>
-get_queue_descriptors(std::vector<model::port_info>& port_info)
+filter_queue_descriptors(std::vector<queue::descriptor>&& q_descriptors)
 {
-    auto q_descriptors = topology::queue_distribute(port_info);
-
     /*
      * XXX: If we have only one worker thread, then everything should use the
      * direct transmit functions.  Hence, we don't need any tx queues.
@@ -112,19 +92,13 @@ get_queue_descriptors(std::vector<model::port_info>& port_info)
             std::remove_if(begin(q_descriptors),
                            end(q_descriptors),
                            [](const queue::descriptor& d) {
-                               return (d.mode == queue::queue_mode::TX);
+                               return (d.direction
+                                       == queue::queue_direction::TX);
                            }),
             end(q_descriptors));
-
-        /* Change all RXTX queues to RX only */
-        for (auto& d : q_descriptors) {
-            if (d.mode == queue::queue_mode::RXTX) {
-                d.mode = queue::queue_mode::RX;
-            }
-        }
     }
 
-    return (q_descriptors);
+    return (std::move(q_descriptors));
 }
 
 static unsigned num_workers() { return (rte_lcore_count() - 1); }
@@ -168,14 +142,15 @@ static void maybe_enable_rxq_tag_detection(const port::filter& filter)
     if (filter.type() == port::filter_type::flow) {
         auto& queues = worker::port_queues::instance();
         auto& container = queues[filter.port_id()];
-        for (uint16_t i = 0; i < container.rx_queues(); i++) {
-            auto rxq = container.rx(i);
+        auto q_ids = container.rx_queues();
+        std::for_each(std::begin(q_ids), std::end(q_ids), [&](auto&& q) {
+            auto rxq = container.rx(q);
             OP_LOG(OP_LOG_DEBUG,
                    "Enabling hardware flow tag detection on RX queue %u:%u\n",
                    rxq->port_id(),
                    rxq->queue_id());
             rxq->flags(rxq->flags() | rx_feature_flags::hardware_tags);
-        }
+        });
     }
 }
 
@@ -184,14 +159,15 @@ static void maybe_disable_rxq_tag_detection(const port::filter& filter)
     if (filter.type() == port::filter_type::flow) {
         auto& queues = worker::port_queues::instance();
         auto& container = queues[filter.port_id()];
-        for (uint16_t i = 0; i < container.rx_queues(); i++) {
-            auto rxq = container.rx(i);
+        auto q_ids = container.rx_queues();
+        std::for_each(std::begin(q_ids), std::end(q_ids), [&](auto&& q) {
+            auto rxq = container.rx(q);
             OP_LOG(OP_LOG_DEBUG,
                    "Disabling hardware flow tag detection on RX queue %u:%u\n",
                    rxq->port_id(),
                    rxq->queue_id());
             rxq->flags(rxq->flags() & ~rx_feature_flags::hardware_tags);
-        }
+        });
     }
 }
 
@@ -200,15 +176,16 @@ static void maybe_update_rxq_lro_mode(const model::port_info& info)
     if (info.rx_offloads() & DEV_RX_OFFLOAD_TCP_LRO) {
         auto& queues = worker::port_queues::instance();
         auto& container = queues[info.id()];
-        for (uint16_t i = 0; i < container.rx_queues(); i++) {
-            auto rxq = container.rx(i);
+        auto q_ids = container.rx_queues();
+        std::for_each(std::begin(q_ids), std::end(q_ids), [&](auto&& q) {
+            auto rxq = container.rx(q);
             OP_LOG(OP_LOG_DEBUG,
                    "Disabling software LRO on RX queue %u:%u. "
                    "Hardware support detected\n",
                    rxq->port_id(),
                    rxq->queue_id());
             rxq->flags(rxq->flags() | rx_feature_flags::hardware_lro);
-        }
+        });
     }
 }
 
@@ -244,12 +221,13 @@ worker_controller::worker_controller(void* context,
     /* And create the periodic callback */
     setup_recycler_callback(loop, m_recycler.get());
 
-    /* We need port information to setup our workers, so get it */
-    auto port_info = get_port_info();
+    /* We need port and queue information to setup our workers */
+    auto port_info = topology::get_port_info();
+    auto q_descriptors = topology::queue_distribute(port_info);
 
     /* Construct our necessary transmit schedulers and metadata */
-    for (auto& d : topology::queue_distribute(port_info)) {
-        if (d.mode == queue::queue_mode::RX) continue;
+    for (auto& d : q_descriptors) {
+        if (d.direction == queue::queue_direction::RX) continue;
         m_tx_schedulers.push_back(
             std::make_unique<tx_scheduler>(*m_tib, d.port_id, d.queue_id));
         m_tx_loads.emplace(d.worker_id, 0);
@@ -258,9 +236,9 @@ worker_controller::worker_controller(void* context,
     }
 
     /* Construct our necessary port queues */
-    auto q_descriptors = get_queue_descriptors(port_info);
+    auto portq_descriptors = filter_queue_descriptors(std::move(q_descriptors));
     auto& queues = worker::port_queues::instance();
-    queues.setup(m_fib.get(), q_descriptors);
+    queues.setup(m_fib.get(), portq_descriptors);
 
     /* Update queues to take advantage of port capabilities */
     /* XXX: queues must be setup first! */
@@ -275,7 +253,7 @@ worker_controller::worker_controller(void* context,
 
     /* Distribute queues and schedulers to workers */
     m_workers->add_descriptors(to_worker_descriptors(
-        q_descriptors, m_tx_schedulers, m_tx_workers, queues));
+        portq_descriptors, m_tx_schedulers, m_tx_workers, queues));
 
     /* And start them */
     m_driver.start_all_ports();
@@ -329,11 +307,10 @@ worker_controller::operator=(worker_controller&& other) noexcept
 }
 
 static std::vector<unsigned>
-get_queue_worker_ids(queue::queue_mode type,
+get_queue_worker_ids(queue::queue_direction direction,
                      std::optional<int> port_id = std::nullopt)
 {
-    auto port_info = get_port_info();
-    auto q_descriptors = topology::queue_distribute(port_info);
+    auto q_descriptors = topology::queue_distribute();
 
     /* If caller gave us a port, filter out all non-matching descriptors */
     if (port_id) {
@@ -352,23 +329,8 @@ get_queue_worker_ids(queue::queue_mode type,
      */
     std::vector<unsigned> workers;
     std::for_each(
-        std::begin(q_descriptors), std::end(q_descriptors), [&](auto& d) {
-            bool match = false;
-            switch (type) {
-            case queue::queue_mode::NONE:
-                match = (d.mode == type);
-                break;
-            case queue::queue_mode::TX:
-            case queue::queue_mode::RX:
-                match = (d.mode == type) || (d.mode == queue::queue_mode::RXTX);
-                break;
-            case queue::queue_mode::RXTX:
-                match = (d.mode == queue::queue_mode::RX)
-                        || (d.mode == queue::queue_mode::TX)
-                        || (d.mode == queue::queue_mode::RXTX);
-                break;
-            }
-            if (match) workers.push_back(d.worker_id);
+        std::begin(q_descriptors), std::end(q_descriptors), [&](const auto& d) {
+            if (d.direction == direction) { workers.emplace_back(d.worker_id); }
         });
 
     /* Sort and remove any duplicates before returning */
@@ -400,29 +362,32 @@ static int get_port_index(std::string_view id,
     return (-1);
 }
 
-static queue::queue_mode to_queue_mode(packet::traffic_direction direction)
-{
-    switch (direction) {
-    case packet::traffic_direction::NONE:
-        return queue::queue_mode::NONE;
-    case packet::traffic_direction::RX:
-        return queue::queue_mode::RX;
-    case packet::traffic_direction::TX:
-        return queue::queue_mode::TX;
-    case packet::traffic_direction::RXTX:
-        return queue::queue_mode::RXTX;
-    }
-}
-
 std::vector<unsigned>
 worker_controller::get_worker_ids(packet::traffic_direction direction,
                                   std::optional<std::string_view> obj_id) const
 {
-    auto mode = to_queue_mode(direction);
+    auto directions = std::vector<queue::queue_direction>{};
 
-    return (obj_id ? get_queue_worker_ids(
-                mode, get_port_index(*obj_id, m_driver, m_fib.get()))
-                   : get_queue_worker_ids(mode));
+    if (direction == packet::traffic_direction::RXTX
+        || direction == packet::traffic_direction::RX) {
+        directions.push_back(queue::queue_direction::RX);
+    }
+
+    if (direction == packet::traffic_direction::RXTX
+        || direction == packet::traffic_direction::TX) {
+        directions.push_back(queue::queue_direction::TX);
+    }
+
+    auto ids = std::vector<unsigned>{};
+
+    for (auto&& dir : directions) {
+        auto dir_ids = (obj_id ? get_queue_worker_ids(
+                            dir, get_port_index(*obj_id, m_driver, m_fib.get()))
+                               : get_queue_worker_ids(dir));
+        ids.insert(std::end(ids), std::begin(dir_ids), std::end(dir_ids));
+    }
+
+    return (ids);
 }
 
 template <typename T>
@@ -437,6 +402,14 @@ worker_controller::get_transmit_function(std::string_view port_id) const
     auto port_idx = m_driver.port_index(port_id);
     if (!port_idx) {
         /* Also a comment on the caller ;-) */
+        return (to_transmit_function(worker::tx_dummy));
+    }
+
+    /* Check to see if their are any transmit queues for this port idx */
+    auto& queues = worker::port_queues::instance();
+    auto& container = queues[*port_idx];
+    if (container.tx_queues().empty()) {
+        /* No queues -> no transmit */
         return (to_transmit_function(worker::tx_dummy));
     }
 

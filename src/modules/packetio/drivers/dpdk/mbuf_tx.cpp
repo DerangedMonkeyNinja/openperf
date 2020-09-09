@@ -2,6 +2,7 @@
 #include <string>
 
 #include "core/op_log.h"
+#include "dpdk_proc_shim/api.h"
 #include "packetio/drivers/dpdk/dpdk.h"
 #include "packetio/drivers/dpdk/mbuf_tx.hpp"
 
@@ -9,13 +10,13 @@ namespace openperf::packetio::dpdk {
 
 uint64_t mbuf_tx_sink_flag = 0;
 
+static constexpr auto mbuf_dynflag_tx =
+    rte_mbuf_dynflag{.name = "packetio_dynflag_mbuf_tx_sink", .flags = 0};
+
 void mbuf_tx_init()
 {
-    static constexpr auto mbuf_dynflag_tx =
-        rte_mbuf_dynflag{.name = "packetio_dynflag_mbuf_tx_sink", .flags = 0};
-
     /* Register the tx sink mbuf flag for any available bit */
-    auto bitnum = rte_mbuf_dynflag_register_bitnum(&mbuf_dynflag_tx, UINT_MAX);
+    auto bitnum = dps_mbuf_dynflag_register(&mbuf_dynflag_tx);
     if (bitnum < 0) {
         throw std::runtime_error(
             "Could not register dynamic bit number for mbuf tx sink: "

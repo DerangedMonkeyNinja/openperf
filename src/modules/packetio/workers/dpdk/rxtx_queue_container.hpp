@@ -1,6 +1,8 @@
 #ifndef _OP_PACKETIO_DPDK_RXTX_QUEUE_CONTAINER_HPP_
 #define _OP_PACKETIO_DPDK_RXTX_QUEUE_CONTAINER_HPP_
 
+#include <algorithm>
+#include <cassert>
 #include <memory>
 #include <vector>
 
@@ -12,25 +14,49 @@ template <typename RxQueue, typename TxQueue> class rxtx_queue_container
     std::vector<std::unique_ptr<TxQueue>> m_txqs;
 
 public:
-    rxtx_queue_container(uint16_t port_id, uint16_t nb_rxqs, uint16_t nb_txqs)
+    rxtx_queue_container(uint16_t port_id,
+                         const std::vector<uint16_t>& rxq_ids,
+                         const std::vector<uint16_t>& txq_ids)
     {
-        for (uint16_t q = 0; q < nb_rxqs; q++) {
-            m_rxqs.push_back(std::make_unique<RxQueue>(port_id, q));
+        if (rxq_ids.size()) {
+            m_rxqs.resize(
+                *std::max_element(std::begin(rxq_ids), std::end(rxq_ids)) + 1);
+            std::for_each(
+                std::begin(rxq_ids), std::end(rxq_ids), [&](uint16_t q) {
+                    m_rxqs[q] = std::make_unique<RxQueue>(port_id, q);
+                });
         }
 
-        for (uint16_t q = 0; q < nb_txqs; q++) {
-            m_txqs.push_back(std::make_unique<TxQueue>(port_id, q));
+        if (txq_ids.size()) {
+            m_txqs.resize(
+                *std::max_element(std::begin(txq_ids), std::end(txq_ids)) + 1);
+            std::for_each(
+                std::begin(txq_ids), std::end(txq_ids), [&](uint16_t q) {
+                    m_txqs[q] = std::make_unique<TxQueue>(port_id, q);
+                });
         }
     }
 
-    uint16_t rx_queues() const
+    std::vector<uint16_t> rx_queues() const
     {
-        return (static_cast<uint16_t>(m_rxqs.size()));
+        auto q_ids = std::vector<uint16_t>{};
+        std::for_each(
+            std::begin(m_rxqs), std::end(m_rxqs), [&](const auto& rxq) {
+                if (rxq) { q_ids.emplace_back(rxq->queue_id()); }
+            });
+
+        return (q_ids);
     }
 
-    uint16_t tx_queues() const
+    std::vector<uint16_t> tx_queues() const
     {
-        return (static_cast<uint16_t>(m_txqs.size()));
+        auto q_ids = std::vector<uint16_t>{};
+        std::for_each(
+            std::begin(m_txqs), std::end(m_txqs), [&](const auto& txq) {
+                if (txq) { q_ids.emplace_back(txq->queue_id()); }
+            });
+
+        return (q_ids);
     }
 
     uint16_t rx_queue_id(uint32_t hash) const { return (hash % m_rxqs.size()); }

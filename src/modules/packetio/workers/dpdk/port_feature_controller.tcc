@@ -1,20 +1,10 @@
 #include "packetio/drivers/dpdk/model/port_info.hpp"
+#include "packetio/drivers/dpdk/topology_utils.hpp"
 #include "packetio/workers/dpdk/port_feature_controller.hpp"
 
 namespace openperf::packetio::dpdk {
 
 namespace detail {
-
-static std::vector<model::port_info> get_port_info()
-{
-    uint16_t port_id = 0;
-    std::vector<model::port_info> port_info;
-    RTE_ETH_FOREACH_DEV (port_id) {
-        port_info.emplace_back(model::port_info(port_id));
-    }
-
-    return (port_info);
-}
 
 template <typename Tuple, typename T, std::size_t index = 0>
 constexpr size_t tuple_index()
@@ -51,7 +41,7 @@ constexpr void for_each_type_at_index(Function&& f, Container&& c, size_t idx)
 template <typename... Features>
 port_feature_controller<Features...>::port_feature_controller()
 {
-    const auto port_info = detail::get_port_info();
+    const auto port_info = topology::get_port_info();
 
     std::transform(std::begin(port_info),
                    std::end(port_info),
@@ -69,8 +59,9 @@ port_feature_controller<Features...>::port_feature_controller(
 {}
 
 template <typename... Features>
-port_feature_controller<Features...>& port_feature_controller<Features...>::
-operator=(port_feature_controller&& other) noexcept
+port_feature_controller<Features...>&
+port_feature_controller<Features...>::operator=(
+    port_feature_controller&& other) noexcept
 {
     if (this != &other) { m_features = std::move(other.m_features); }
     return (*this);

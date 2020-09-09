@@ -1,48 +1,41 @@
-#include <cerrno>
-#include <cstdlib>
-#include <map>
-#include <string>
-#include <vector>
+#include <algorithm>
+#include <numeric>
 
-#include "lwip/netif.h"
-#include "tl/expected.hpp"
-
+#include "core/op_common.h"
+#include "core/op_log.h"
+#include "config/op_config_utils.hpp"
+#include "dpdk_proc_shim/api.h"
 #include "packetio/drivers/dpdk/arg_parser.hpp"
-#include "packetio/drivers/dpdk/dpdk.h"
 #include "packetio/drivers/dpdk/eal.hpp"
 #include "packetio/drivers/dpdk/mbuf_rx_prbs.hpp"
 #include "packetio/drivers/dpdk/mbuf_signature.hpp"
 #include "packetio/drivers/dpdk/mbuf_tx.hpp"
-#include "packetio/drivers/dpdk/topology_utils.hpp"
+#include "packetio/drivers/dpdk/model/core_mask.hpp"
 #include "packetio/drivers/dpdk/model/physical_port.hpp"
-#include "packetio/generic_port.hpp"
-#include "core/op_log.h"
-#include "core/op_uuid.hpp"
-#include "config/op_config_utils.hpp"
+#include "packetio/drivers/dpdk/topology_utils.hpp"
+#include "packetio/memory/dpdk/pool_allocator.hpp"
+#include "utils/overloaded_visitor.hpp"
 
 namespace openperf::packetio::dpdk {
 
-/*
- * This file acts as an intermediary between the lower DPDK layer and the
- * upper REST API layer. DPDK knows about ports in terms of a global index
- * in its “known ports” array. The REST API uses ids implemented as strings
- * that the user can define. The eal class handles this mapping. This is why the
- * naming here seems inconsistent at times.
- */
+/***
+ * Various DPDK static functions
+ ***/
 
-static void
-log_port(uint16_t port_idx, std::string_view port_id, model::port_info& info)
+static void log_port(uint16_t idx, std::string_view id)
 {
-    struct rte_ether_addr mac_addr;
-    rte_eth_macaddr_get(port_idx, &mac_addr);
+    auto mac_addr = rte_ether_addr{};
+    rte_eth_macaddr_get(idx, &mac_addr);
+
+    auto info = model::port_info(idx);
 
     if (auto if_name = info.interface_name()) {
         OP_LOG(OP_LOG_INFO,
                "Port index %u is using id = %.*s (MAC = "
                "%02x:%02x:%02x:%02x:%02x:%02x, driver = %s attached to %s)",
-               port_idx,
-               static_cast<int>(port_id.length()),
-               port_id.data(),
+               idx,
+               static_cast<int>(id.length()),
+               id.data(),
                mac_addr.addr_bytes[0],
                mac_addr.addr_bytes[1],
                mac_addr.addr_bytes[2],
@@ -55,9 +48,9 @@ log_port(uint16_t port_idx, std::string_view port_id, model::port_info& info)
         OP_LOG(OP_LOG_INFO,
                "Port index %u is using id = %.*s (MAC = "
                "%02x:%02x:%02x:%02x:%02x:%02x, driver = %s)",
-               port_idx,
-               static_cast<int>(port_id.length()),
-               port_id.data(),
+               idx,
+               static_cast<int>(id.length()),
+               id.data(),
                mac_addr.addr_bytes[0],
                mac_addr.addr_bytes[1],
                mac_addr.addr_bytes[2],
@@ -90,10 +83,86 @@ static int log_link_status_change(uint16_t port_id,
     return (0);
 }
 
-__attribute__((const)) static const char* dpdk_logtype(int logtype)
+static void log_idle_workers(const std::vector<queue::descriptor>& descriptors)
+{
+    /* Generate a mask for all available cores */
+    auto eal_mask = model::core_mask{};
+    unsigned lcore_id = 0;
+    RTE_LCORE_FOREACH_SLAVE (lcore_id) {
+        eal_mask.set(lcore_id);
+    }
+    const auto worker_count = eal_mask.count();
+
+    /* Clear the bits used to support port queues */
+    std::for_each(std::begin(descriptors),
+                  std::end(descriptors),
+                  [&](const auto& d) { eal_mask.reset(d.worker_id); });
+
+    /* Clear the bit used by the stack */
+    eal_mask.reset(topology::get_stack_lcore_id());
+
+    /* Warn if we are unable to use any of our available cores */
+    if (eal_mask.count()) {
+        OP_LOG(OP_LOG_WARNING,
+               "Only utilizing %zu of %zu available workers\n",
+               worker_count - eal_mask.count(),
+               worker_count);
+    }
+}
+
+static void
+configure_all_ports(const std::map<uint16_t, queue::count>& port_queue_counts,
+                    const pool_allocator* allocator,
+                    const std::map<uint16_t, std::string>& id_name)
+{
+    assert(rte_eal_process_type() == RTE_PROC_PRIMARY);
+
+    uint16_t port_id = 0;
+    RTE_ETH_FOREACH_DEV (port_id) {
+        auto info = model::port_info(port_id);
+        auto mempool = allocator->rx_mempool(info.socket_id());
+        auto port = model::physical_port(port_id, id_name.at(port_id), mempool);
+
+        const auto cursor = port_queue_counts.find(port_id);
+        if (cursor == port_queue_counts.end()) {
+            throw std::runtime_error(
+                "No worker threads available for port "
+                + std::to_string(port_id)
+                + ". Do you need to adjust your core mask?\n");
+        }
+        const auto& q_count = cursor->second;
+        if (auto result = port.low_level_config(q_count.rx, q_count.tx);
+            !result) {
+            throw std::runtime_error(result.error());
+        }
+    }
+}
+
+static void sanity_check_environment()
+{
+    if (rte_lcore_count() <= 1) {
+        throw std::runtime_error("No DPDK workers cores are available! "
+                                 "At least 2 CPU cores are required.");
+    }
+
+    const auto misc_mask =
+        config::misc_core_mask().value_or(model::core_mask{});
+    const auto rx_mask = config::rx_core_mask().value_or(model::core_mask{});
+    const auto tx_mask = config::tx_core_mask().value_or(model::core_mask{});
+    const auto user_mask = misc_mask | rx_mask | tx_mask;
+
+    if (user_mask[rte_get_master_lcore()]) {
+        throw std::runtime_error("User specified mask, "
+                                 + model::to_string(user_mask)
+                                 + ", conflicts with DPDK master core "
+                                 + std::to_string(rte_get_master_lcore()));
+    }
+}
+
+constexpr const char* dpdk_logtype(int logtype)
 {
     /* Current as of DPDK release 18.08 */
-    static const char* logtype_strings[] = {
+    constexpr const char* logtype_strings[] = {
         "lib.eal",   "lib.malloc",    "lib.ring",  "lib.mempool",
         "lib.timer", "pmd",           "lib.hash",  "lib.lpm",
         "lib.kni",   "lib.acl",       "lib.power", "lib.meter",
@@ -109,7 +178,7 @@ __attribute__((const)) static const char* dpdk_logtype(int logtype)
                 : "unknown");
 }
 
-__attribute__((const)) static enum op_log_level dpdk_loglevel(int loglevel)
+constexpr enum op_log_level dpdk_loglevel(int loglevel)
 {
     /*
      * This should be kept in sync with the inferred log levels found in the
@@ -164,337 +233,373 @@ static ssize_t eal_log_write(void* cookie __attribute__((unused)),
     return (size);
 }
 
-static void
-configure_all_ports(const std::map<int, queue::count>& port_queue_counts,
-                    const pool_allocator* allocator,
-                    const std::unordered_map<int, std::string>& id_name)
-{
-    uint16_t port_id = 0;
-    RTE_ETH_FOREACH_DEV (port_id) {
-        auto info = model::port_info(port_id);
-        auto mempool = allocator->rx_mempool(info.socket_id());
-        auto port = model::physical_port(port_id, id_name.at(port_id), mempool);
+/***
+ * Utility templates
+ ***/
+namespace impl {
 
-        const auto cursor = port_queue_counts.find(port_id);
-        if (cursor == port_queue_counts.end()) {
-            throw std::runtime_error(
-                "No worker threads available for port "
-                + std::to_string(port_id)
-                + ". Do you need to adjust your core mask?\n");
-        }
-        const auto& q_count = cursor->second;
-        if (auto result = port.low_level_config(q_count.rx, q_count.tx);
-            !result) {
-            throw std::runtime_error(result.error());
-        }
-    }
+template <typename, typename = std::void_t<>>
+struct has_do_setup : std::false_type
+{};
+
+template <typename T>
+struct has_do_setup<T, std::void_t<decltype(std::declval<T>().do_setup())>>
+    : std::true_type
+{};
+
+template <typename, typename = std::void_t<>>
+struct has_do_callbacks : std::false_type
+{};
+
+template <typename T>
+struct has_do_callbacks<T,
+                        std::void_t<decltype(std::declval<T>().do_callbacks())>>
+    : std::true_type
+{};
+
+template <typename, typename = std::void_t<>>
+struct has_do_shutdown : std::false_type
+{};
+
+template <typename T>
+struct has_do_shutdown<T,
+                       std::void_t<decltype(std::declval<T>().do_shutdown())>>
+    : std::true_type
+{};
+
+} // namespace impl
+
+void test_port_process::rte_ring_deleter::operator()(rte_ring* ring)
+{
+    rte_ring_free(ring);
 }
 
-static void create_test_portpairs(unsigned test_portpairs)
+void test_port_process::do_setup()
 {
-    for (auto i = 0U; i < test_portpairs; i++) {
-        std::string ring_name0 = "TSTRNG_" + std::to_string(i * 2);
-        auto ring0 = rte_ring_create(
-            ring_name0.c_str(), 1024, 0, RING_F_SP_ENQ | RING_F_SC_DEQ);
-        if (!ring0) {
-            throw std::runtime_error(
-                "Failed to create ring for vdev eth_ring\n");
-        }
+    constexpr auto eth_prefix = "net_ring";
+    constexpr auto ring_prefix = "test_ring";
+    constexpr auto ring_flags = RING_F_SP_ENQ | RING_F_SC_DEQ;
+    constexpr auto ring_slots = 256;
+    constexpr auto socket_id = SOCKET_ID_ANY;
 
-        std::string ring_name1 = "TSTRNG_" + std::to_string(i * 2 + 1);
-        auto ring1 = rte_ring_create(
-            ring_name1.c_str(), 1024, 0, RING_F_SP_ENQ | RING_F_SC_DEQ);
-        if (!ring1) {
-            throw std::runtime_error(
-                "Failed to create ring for vdev eth_ring\n");
-        }
+    const auto nb_test_portpairs = config::dpdk_test_portpairs();
+    assert(nb_test_portpairs);
 
-        if (rte_eth_from_rings(ring_name0.c_str(), &ring0, 1, &ring1, 1, 0)
-                == -1
-            || rte_eth_from_rings(ring_name1.c_str(), &ring1, 1, &ring0, 1, 0)
-                   == -1) {
-            throw std::runtime_error("Failed to create vdev eth_ring device\n");
-        }
-    }
+    /* Generate rings for our test ports to use */
+    unsigned idx = 0;
+    std::generate_n(std::back_inserter(m_ring_pairs),
+                    nb_test_portpairs,
+                    [&]() -> ring_pair {
+                        auto name0 = ring_prefix + std::to_string(idx++);
+                        auto ring0 = rte_ring_create(
+                            name0.c_str(), ring_slots, socket_id, ring_flags);
+                        if (!ring0) {
+                            throw std::runtime_error(
+                                "Failed to create test port ring " + name0);
+                        }
+
+                        auto name1 = ring_prefix + std::to_string(idx++);
+                        auto ring1 = rte_ring_create(
+                            name1.c_str(), ring_slots, socket_id, ring_flags);
+                        if (!ring1) {
+                            throw std::runtime_error(
+                                "Failed to create test port ring " + name1);
+                        }
+
+                        return {ring_ptr(ring0), ring_ptr(ring1)};
+                    });
+
+    assert(m_ring_pairs.size() == nb_test_portpairs);
+
+    /*
+     * Transform our unique ptrs into raw pointers so that we can treat
+     * each pointer as an array of 1. This is neccessary for the function
+     * that creates the ring based ethernet devices.
+     */
+    auto raw_ring_pairs = std::vector<std::pair<rte_ring*, rte_ring*>>{};
+    std::transform(std::begin(m_ring_pairs),
+                   std::end(m_ring_pairs),
+                   std::back_inserter(raw_ring_pairs),
+                   [](auto& pair) -> std::pair<rte_ring*, rte_ring*> {
+                       return {pair.first.get(), pair.second.get()};
+                   });
+
+    /* Finally, create test port pairs */
+    idx = 0;
+    std::for_each(
+        std::begin(raw_ring_pairs), std::end(raw_ring_pairs), [&](auto& pair) {
+            auto name0 = eth_prefix + std::to_string(idx++);
+            if (rte_eth_from_rings(name0.c_str(),
+                                   std::addressof(pair.first),
+                                   1,
+                                   std::addressof(pair.second),
+                                   1,
+                                   socket_id)
+                == -1) {
+                throw std::runtime_error(
+                    "Failed to create test port device: "
+                    + std::string(rte_strerror(rte_errno)));
+            }
+
+            auto name1 = eth_prefix + std::to_string(idx++);
+            if (rte_eth_from_rings(name1.c_str(),
+                                   std::addressof(pair.second),
+                                   1,
+                                   std::addressof(pair.first),
+                                   1,
+                                   socket_id)
+                == -1) {
+                throw std::runtime_error(
+                    "Failed to create test port device: "
+                    + std::string(rte_strerror(rte_errno)));
+            }
+        });
 }
 
-static void sanity_check_environment()
+void live_port_process::do_callbacks()
 {
-    if (rte_lcore_count() <= 1) {
-        throw std::runtime_error("No DPDK workers cores are available! "
-                                 "At least 2 CPU cores are required.");
-    }
-
-    const auto misc_mask =
-        config::misc_core_mask().value_or(model::core_mask{});
-    const auto rx_mask = config::rx_core_mask().value_or(model::core_mask{});
-    const auto tx_mask = config::tx_core_mask().value_or(model::core_mask{});
-    const auto user_mask = misc_mask | rx_mask | tx_mask;
-
-    if (user_mask[rte_get_master_lcore()]) {
-        throw std::runtime_error("User specified mask, "
-                                 + model::to_string(user_mask)
-                                 + ", conflicts with DPDK master core "
-                                 + std::to_string(rte_get_master_lcore()));
-    }
-}
-
-static void log_idle_workers(const std::vector<queue::descriptor>& descriptors)
-{
-    /* Generate a mask for all available cores */
-    auto eal_mask = model::core_mask{};
-    unsigned lcore_id = 0;
-    RTE_LCORE_FOREACH_SLAVE (lcore_id) {
-        eal_mask.set(lcore_id);
-    }
-    const auto worker_count = eal_mask.count();
-
-    /* Clear the bits used to support port queues */
-    std::for_each(std::begin(descriptors),
-                  std::end(descriptors),
-                  [&](const auto& d) { eal_mask.reset(d.worker_id); });
-
-    /* Clear the bit used by the stack */
-    eal_mask.reset(topology::get_stack_lcore_id());
-
-    /* Warn if we are unable to use any of our available cores */
-    if (eal_mask.count()) {
+    if (auto error = rte_eth_dev_callback_register(RTE_ETH_ALL,
+                                                   RTE_ETH_EVENT_INTR_LSC,
+                                                   log_link_status_change,
+                                                   nullptr)) {
         OP_LOG(OP_LOG_WARNING,
-               "Only utilizing %zu of %zu available workers\n",
-               worker_count - eal_mask.count(),
-               worker_count);
+               "Could not register link status change callback: %s\n",
+               rte_strerror(std::abs(error)));
     }
 }
 
-eal eal::test_environment(std::vector<std::string>&& args,
-                          std::unordered_map<int, std::string>&& port_ids,
-                          unsigned test_portpairs)
+void live_port_process::do_shutdown()
 {
-    assert(test_portpairs != 0);
-    return (eal(std::forward<decltype(args)>(args),
-                std::forward<decltype(port_ids)>(port_ids),
-                test_portpairs));
+    rte_eth_dev_callback_unregister(
+        RTE_ETH_ALL, RTE_ETH_EVENT_INTR_LSC, log_link_status_change, nullptr);
 }
 
-eal eal::real_environment(std::vector<std::string>&& args,
-                          std::unordered_map<int, std::string>&& port_ids)
+template <typename PortHandler>
+std::map<uint16_t, std::string> primary_process<PortHandler>::init()
 {
-    return (eal(std::forward<decltype(args)>(args),
-                std::forward<decltype(port_ids)>(port_ids)));
-}
+    assert(rte_eal_process_type() == RTE_PROC_PRIMARY);
+    auto derived = static_cast<PortHandler*>(this);
+    auto port_ids = config::dpdk_id_map();
 
-eal::eal(std::vector<std::string>&& args,
-         std::unordered_map<int, std::string>&& port_ids,
-         unsigned test_portpairs)
-    : m_initialized(false)
-    , m_port_ids(port_ids)
-{
-    /* Convert args to c-strings for DPDK consumption */
-    std::vector<char*> eal_args;
-    eal_args.reserve(args.size() + 1);
-    std::transform(begin(args),
-                   end(args),
-                   std::back_inserter(eal_args),
-                   [](std::string& s) { return s.data(); });
-    eal_args.push_back(nullptr); /* null terminator */
+    dps_primary_init();
 
-    OP_LOG(OP_LOG_INFO,
-           "Initializing DPDK with \\\"%s\\\"\n",
-           std::accumulate(
-               begin(args),
-               end(args),
-               std::string(),
-               [](const std::string& a, const std::string& b) -> std::string {
-                   return a + (a.length() > 0 ? " " : "") + b;
-               })
-               .c_str());
-
-    /* Create a stream for the EAL to use that forwards its messages to our
-     * logger */
-    cookie_io_functions_t stream_functions = {.write = eal_log_write};
-
-    auto stream = fopencookie(nullptr, "w+", stream_functions);
-    if (!stream || rte_openlog_stream(stream) < 0) {
-        throw std::runtime_error("Failed to set DPDK log stream");
-    }
-
-    int parsed_or_err =
-        rte_eal_init(static_cast<int>(eal_args.size() - 1), eal_args.data());
-    if (parsed_or_err < 0) {
-        throw std::runtime_error("Failed to initialize DPDK");
+    /* Perform required port setup */
+    if constexpr (impl::has_do_setup<PortHandler>::value) {
+        derived->do_setup();
     }
 
     /*
-     * rte_eal_init returns the number of parsed arguments; warn if some
-     * arguments were unparsed.  We subtract two to account for the trailing
-     * null and the program name.
+     * Load available port information; make sure that all ports
+     * have ids and then use the information to generate a topology
      */
-    if (parsed_or_err != static_cast<int>(eal_args.size() - 2)) {
-        OP_LOG(OP_LOG_ERROR,
-               "DPDK initialization routine only parsed %d of %" PRIu64
-               " arguments\n",
-               parsed_or_err,
-               eal_args.size() - 2);
-    }
+    auto port_info = topology::get_port_info();
+    std::for_each(
+        std::begin(port_info), std::end(port_info), [&](const auto& info) {
+            if (!port_ids.count(info.id())) {
+                port_ids[info.id()] = core::to_string(core::uuid::random());
+            }
+        });
 
-    sanity_check_environment();
-
-    /* Find some space for Spirent test signatures and PRBS data */
-    mbuf_signature_init();
-    mbuf_rx_prbs_init();
-    mbuf_tx_init();
-
-    if (test_portpairs > 0) { create_test_portpairs(test_portpairs); }
-
-    /*
-     * Loop through our available ports and...
-     * 1. Log the MAC/driver to the console
-     * 2. Generate a port_info vector
-     * 3. Generate a UUID name for any port that doesn't already have a name
-     */
-    uint16_t port_id = 0;
-    std::vector<model::port_info> port_info;
-    RTE_ETH_FOREACH_DEV (port_id) {
-        if (m_port_ids.find(port_id) == m_port_ids.end()) {
-            m_port_ids[port_id] = core::to_string(core::uuid::random());
-        }
-        port_info.emplace_back(model::port_info(port_id));
-        log_port(port_id, m_port_ids.at(port_id), port_info.back());
-    }
-
-    /* Make sure we have some ports to use */
-    if (port_info.empty()) {
-        throw std::runtime_error("No DPDK ports are available! "
-                                 "At least 1 port is required.");
-    }
-
-    /* Sanity check all ports have names. */
-    assert(port_info.size() == m_port_ids.size());
-
-    OP_LOG(OP_LOG_INFO,
-           "DPDK initialized with %" PRIu64 " ports and %u workers\n",
-           port_info.size(),
-           rte_lcore_count() - 1);
-
-    /*
-     * Determine how we should configure port queues based on ports, lcores,
-     * and cpu topoology.
-     */
     auto q_descriptors = topology::queue_distribute(port_info);
     log_idle_workers(q_descriptors);
     auto q_counts = queue::get_port_queue_counts(q_descriptors);
 
-    /* Use the port_info and queue counts to allocate our default memory pools
-     */
     m_allocator = std::make_unique<pool_allocator>(port_info, q_counts);
 
-    /* Use the queue descriptors to configure all of our ports */
-    configure_all_ports(q_counts, m_allocator.get(), m_port_ids);
+    configure_all_ports(q_counts, m_allocator.get(), port_ids);
 
-    /* Finally, register a callback to log link status changes and start our
-     * ports. */
-    if (int error = rte_eth_dev_callback_register(RTE_ETH_ALL,
-                                                  RTE_ETH_EVENT_INTR_LSC,
-                                                  log_link_status_change,
-                                                  nullptr);
-        error != 0) {
-        OP_LOG(OP_LOG_WARNING,
-               "Could not register link status change callback: %s\n",
-               strerror(std::abs(error)));
-    }
-
-    m_initialized = true;
-}
-
-eal::~eal()
-{
-    if (!m_initialized) { return; }
-
-    stop_all_ports();
-
-    rte_eth_dev_callback_unregister(
-        RTE_ETH_ALL, RTE_ETH_EVENT_INTR_LSC, log_link_status_change, nullptr);
-
-    /* Shut up clang's warning about this being an unstable ABI function */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    rte_eal_cleanup();
-#pragma clang diagnostic pop
-};
-
-eal::eal(eal&& other) noexcept
-    : m_initialized(other.m_initialized)
-    , m_allocator(std::move(other.m_allocator))
-    , m_bond_ports(std::move(other.m_bond_ports))
-    , m_port_ids(std::move(other.m_port_ids))
-{
-    other.m_initialized = false;
-}
-
-eal& eal::operator=(eal&& other) noexcept
-{
-    if (this != &other) {
-        m_initialized = other.m_initialized;
-        other.m_initialized = false;
-        m_allocator = std::move(other.m_allocator);
-        m_bond_ports = std::move(other.m_bond_ports);
-        m_port_ids = std::move(other.m_port_ids);
-    }
-    return (*this);
-}
-
-void eal::start_all_ports() const
-{
-    uint16_t port_id = 0;
-    RTE_ETH_FOREACH_DEV (port_id) {
-        model::physical_port(port_id, m_port_ids.at(port_id)).start();
-    }
-}
-
-void eal::stop_all_ports() const
-{
-    uint16_t port_id = 0;
-    RTE_ETH_FOREACH_DEV (port_id) {
-        model::physical_port(port_id, m_port_ids.at(port_id)).stop();
-    }
-}
-
-std::vector<std::string> eal::port_ids() const
-{
-    uint16_t port_idx = 0;
-    std::vector<std::string> port_ids;
-    RTE_ETH_FOREACH_DEV (port_idx) {
-        port_ids.emplace_back(m_port_ids.at(port_idx));
+    if constexpr (impl::has_do_callbacks<PortHandler>::value) {
+        derived->do_callbacks();
     }
 
     return (port_ids);
 }
 
+template <typename PortHandler> void primary_process<PortHandler>::shutdown()
+{
+    if constexpr (impl::has_do_shutdown<PortHandler>::value) {
+        static_cast<PortHandler*>(this)->do_shutdown();
+    }
+
+    dps_primary_fini();
+}
+
+std::map<uint16_t, std::string> secondary_process::init()
+{
+    assert(rte_eal_process_type() == RTE_PROC_SECONDARY);
+
+    dps_secondary_init();
+
+    auto port_ids = config::dpdk_id_map();
+
+    /*
+     * Load available port information; make sure that all ports
+     * have ids and then use the information to generate a topology
+     */
+    auto port_info = topology::get_port_info();
+    std::for_each(
+        std::begin(port_info), std::end(port_info), [&](const auto& info) {
+            if (!port_ids.count(info.id())) {
+                port_ids[info.id()] = core::to_string(core::uuid::random());
+            }
+
+            auto mode = rte_eth_burst_mode{};
+            rte_eth_rx_burst_mode_get(0, 0, &mode);
+            fprintf(stderr, "Using RX mode = %s\n", mode.info);
+        });
+
+    return (port_ids);
+}
+
+void secondary_process::shutdown() { dps_secondary_fini(); }
+
+/*
+ * Perform the minimal amount of work necessary to load the DPDK environment
+ * and return an object that can handle the process type correctly.
+ */
+static process_type bootstrap()
+{
+    /*
+     * Create a stream so we can forward DPDK logging messages to our own
+     * internal logger.
+     */
+    cookie_io_functions_t stream_functions = {.write = eal_log_write};
+    auto stream = fopencookie(nullptr, "w+", stream_functions);
+    if (!stream || rte_openlog_stream(stream) < 0) {
+        throw std::runtime_error("Failed to set DPDK log stream");
+    }
+
+    /* Convert args to c-strings for DPDK consumption */
+    auto args = config::dpdk_args();
+    auto eal_args = std::vector<char*>{};
+    eal_args.reserve(args.size() + 1);
+    std::transform(std::begin(args),
+                   std::end(args),
+                   std::back_inserter(eal_args),
+                   [](auto& s) { return s.data(); });
+    eal_args.emplace_back(nullptr); /* null terminator */
+
+    OP_LOG(OP_LOG_INFO,
+           "Initializing DPDK with \\\"%s\\\"\n",
+           std::accumulate(std::begin(args),
+                           std::end(args),
+                           std::string{},
+                           [](std::string& lhs, const std::string& rhs) {
+                               return (lhs += (lhs.length() ? " " : "") + rhs);
+                           })
+               .c_str());
+
+    auto parsed_or_err =
+        rte_eal_init(static_cast<int>(eal_args.size() - 1), eal_args.data());
+    if (parsed_or_err < 0) {
+        throw std::runtime_error("Failed to initialize DPDK: "
+                                 + std::string(rte_strerror(rte_errno)));
+    }
+
+    /*
+     * rte_eal_init returns the number of parsed arguments; warn if some
+     * arguments were unparsed. We subtract two to account for the trailing
+     * null and the program name.
+     */
+    if (parsed_or_err != static_cast<int>(eal_args.size() - 2)) {
+        OP_LOG(OP_LOG_ERROR,
+               "DPDK initialization function only parsed %d of %" PRIu64
+               " arguments\n",
+               parsed_or_err,
+               eal_args.size() - 2);
+    }
+
+    switch (rte_eal_process_type()) {
+    case RTE_PROC_PRIMARY:
+        if (config::dpdk_test_mode()) { return (test_port_process{}); }
+        return (live_port_process{});
+    case RTE_PROC_SECONDARY:
+        return (secondary_process{});
+    default:
+        throw std::runtime_error("Invalid DPDK process type");
+    }
+}
+
+eal::eal()
+    : m_process(bootstrap())
+    , m_port_ids(std::visit([](auto& p) { return (p.init()); }, m_process))
+{
+    /* Verify that our environment is usable */
+    sanity_check_environment();
+
+    if (m_port_ids.empty()) {
+        throw std::runtime_error("No DPDK ports are available! "
+                                 "At least 1 port is required.");
+    }
+
+    /* Log port details */
+    std::for_each(std::begin(m_port_ids),
+                  std::end(m_port_ids),
+                  [](const auto& item) { log_port(item.first, item.second); });
+
+    /* Setup our specific mbuf features */
+    mbuf_signature_init();
+    mbuf_rx_prbs_init();
+    mbuf_tx_init();
+}
+
+eal::eal(eal&& other) noexcept
+    : m_process(std::move(other.m_process))
+    , m_port_ids(std::move(other.m_port_ids))
+    , m_bond_ports(std::move(other.m_bond_ports))
+{}
+
+eal& eal::operator=(eal&& other) noexcept
+{
+    if (this != &other) {
+        m_process = std::move(other.m_process);
+        m_port_ids = std::move(other.m_port_ids);
+        m_bond_ports = std::move(other.m_bond_ports);
+    }
+    return (*this);
+}
+
+eal::~eal()
+{
+    if (m_port_ids.empty()) { return; }
+
+    std::visit([](auto& p) { p.shutdown(); }, m_process);
+}
+
+std::vector<std::string> eal::port_ids() const
+{
+    auto ids = std::vector<std::string>{};
+
+    std::transform(std::begin(m_port_ids),
+                   std::end(m_port_ids),
+                   std::back_inserter(ids),
+                   [](const auto& item) { return (item.second); });
+
+    return (ids);
+}
+
 std::optional<port::generic_port> eal::port(std::string_view id) const
 {
     auto idx = port_index(id);
-    if (!idx) { return (std::nullopt); }
+    if (!idx || !rte_eth_dev_is_valid_port(idx.value())) {
+        return (std::nullopt);
+    }
 
     return (
-        rte_eth_dev_is_valid_port(idx.value())
-            ? std::make_optional(port::generic_port(model::physical_port(
-                idx.value(),
-                std::string(id),
-                m_allocator->rx_mempool(rte_eth_dev_socket_id(idx.value())))))
-            : std::nullopt);
+        port::generic_port(model::physical_port(idx.value(), std::string(id))));
 }
 
-/* Method to look up a DPDK port index by REST API id. */
 std::optional<int> eal::port_index(std::string_view id) const
 {
-    auto it = std::find_if(m_port_ids.begin(),
-                           m_port_ids.end(),
-                           [id](const std::pair<int, std::string>& val) {
-                               return val.second == id;
-                           });
+    if (auto it = std::find_if(
+            std::begin(m_port_ids),
+            std::end(m_port_ids),
+            [id](const auto& pair) { return (pair.second == id); });
+        it != std::end(m_port_ids)) {
+        return (it->first);
+    }
 
-    return (it != m_port_ids.end() ? std::make_optional(it->first)
-                                   : std::nullopt);
+    return (std::nullopt);
 }
 
 tl::expected<std::string, std::string>
@@ -598,6 +703,24 @@ tl::expected<void, std::string> eal::delete_port(std::string_view id)
     m_bond_ports.erase(port_idx);
     m_port_ids.erase(port_idx);
     return {};
+}
+
+void eal::start_all_ports() const
+{
+    auto port_info = topology::get_port_info();
+    for (const auto& info : port_info) {
+        model::physical_port(info.id(), m_port_ids.at(info.id())).start();
+    }
+}
+
+void eal::stop_all_ports() const
+{
+#if 0
+    auto port_info = topology::get_port_info();
+    for (const auto& info : port_info) {
+        model::physical_port(info.id(), m_port_ids.at(info.id())).stop();
+    }
+#endif
 }
 
 } // namespace openperf::packetio::dpdk

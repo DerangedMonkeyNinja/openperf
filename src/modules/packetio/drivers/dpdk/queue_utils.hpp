@@ -15,7 +15,7 @@ class port_info;
 
 namespace queue {
 
-enum class queue_mode { NONE = 0, RX, TX, RXTX };
+enum class queue_direction { NONE = 0, RX, TX };
 
 /**
  * Structure describing how to configure port queues
@@ -25,7 +25,7 @@ struct descriptor
     uint16_t worker_id; /**< worker id that should handle the specified queue */
     uint16_t port_id;   /**< queue's port id */
     uint16_t queue_id;  /**< queue's queue id */
-    queue_mode mode;    /**< operational mode of queue for worker */
+    queue_direction direction; /**< queue direction for worker */
 };
 
 /**
@@ -58,8 +58,17 @@ struct count
  * @return
  *   A map of port indexes to queue counts
  */
-std::map<int, count>
+std::map<uint16_t, count>
 get_port_queue_counts(const std::vector<descriptor>& descriptors);
+
+struct queue_ids
+{
+    std::vector<uint16_t> rx;
+    std::vector<uint16_t> tx;
+};
+
+std::map<uint16_t, queue_ids>
+get_port_queue_map(const std::vector<descriptor>& descriptors);
 
 } // namespace queue
 } // namespace openperf::packetio::dpdk

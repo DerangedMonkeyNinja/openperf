@@ -1,43 +1,68 @@
 #ifndef _OP_PACKETIO_DPDK_EAL_HPP_
 #define _OP_PACKETIO_DPDK_EAL_HPP_
 
-#include <any>
+#include <map>
 #include <memory>
-#include <string>
+#include <optional>
 #include <vector>
-#include <unordered_map>
+#include <variant>
 
-#include "packetio/generic_driver.hpp"
 #include "packetio/generic_port.hpp"
-#include "packetio/memory/dpdk/pool_allocator.hpp"
 
-namespace openperf::packetio {
+struct rte_ring;
 
-namespace port {
-class generic_port;
-}
+namespace openperf::packetio::dpdk {
 
-namespace dpdk {
+class pool_allocator;
+
+template <typename PortHandler> struct primary_process
+{
+    std::unique_ptr<pool_allocator> m_allocator;
+
+    std::map<uint16_t, std::string> init();
+    void shutdown();
+};
+
+struct test_port_process : primary_process<test_port_process>
+{
+    struct rte_ring_deleter
+    {
+        void operator()(rte_ring*);
+    };
+
+    using ring_ptr = std::unique_ptr<rte_ring, rte_ring_deleter>;
+    using ring_pair = std::pair<ring_ptr, ring_ptr>;
+
+    std::vector<ring_pair> m_ring_pairs;
+
+    void do_setup();
+};
+
+struct live_port_process : primary_process<live_port_process>
+{
+    void do_callbacks();
+    void do_shutdown();
+};
+
+struct secondary_process
+{
+    std::map<uint16_t, std::string> init();
+    void shutdown();
+};
+
+using process_type =
+    std::variant<test_port_process, live_port_process, secondary_process>;
 
 class eal
 {
 public:
-    /* named constructors */
-    static eal test_environment(std::vector<std::string>&& args,
-                                std::unordered_map<int, std::string>&& port_ids,
-                                unsigned test_portpairs);
-
-    static eal
-    real_environment(std::vector<std::string>&& args,
-                     std::unordered_map<int, std::string>&& port_ids);
-
+    eal();
     ~eal();
 
-    /* environment is movable */
+    /* This object is basically a non-copyable singleton */
     eal& operator=(eal&& other) noexcept;
     eal(eal&& other) noexcept;
 
-    /* environment is non-copyable */
     eal(const eal&) = delete;
     eal& operator=(const eal&&) = delete;
 
@@ -53,17 +78,11 @@ public:
     void stop_all_ports() const;
 
 private:
-    bool m_initialized;
-    std::unique_ptr<pool_allocator> m_allocator;
-    std::unordered_map<int, std::string> m_bond_ports;
-    std::unordered_map<int, std::string> m_port_ids;
-
-    eal(std::vector<std::string>&& args,
-        std::unordered_map<int, std::string>&& port_ids,
-        unsigned test_portpairs = 0);
+    process_type m_process;
+    std::map<uint16_t, std::string> m_port_ids;
+    std::map<uint16_t, std::string> m_bond_ports;
 };
 
-} // namespace dpdk
-} // namespace openperf::packetio
+} // namespace openperf::packetio::dpdk
 
 #endif /* _OP_PACKETIO_DPDK_EAL_HPP_ */

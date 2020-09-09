@@ -8,7 +8,6 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 
-#include "packetio/drivers/dpdk/model/physical_port.hpp"
 #include "packetio/workers/dpdk/tx_queue.hpp"
 #include "core/op_log.h"
 
@@ -42,7 +41,8 @@ tx_queue::tx_queue(uint16_t port_id, uint16_t queue_id)
     }
 
     if (!m_data.ring) {
-        throw std::runtime_error("Could not create DPDK ring for tx queue");
+        throw std::runtime_error("Could not create DPDK ring for tx queue: "
+                                 + std::string(rte_strerror(rte_errno)));
     }
 }
 
