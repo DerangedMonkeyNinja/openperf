@@ -37,7 +37,8 @@ class PacketGeneratorResult(object):
         'flow_counters': 'PacketGeneratorFlowCounters',
         'flows': 'list[str]',
         'protocol_counters': 'PacketGeneratorProtocolCounters',
-        'remaining': 'TrafficDurationRemainder'
+        'remaining': 'TrafficDurationRemainder',
+        'clock_sync': 'PacketGeneratorResultClockSync'
     }
 
     attribute_map = {
@@ -47,10 +48,11 @@ class PacketGeneratorResult(object):
         'flow_counters': 'flow_counters',
         'flows': 'flows',
         'protocol_counters': 'protocol_counters',
-        'remaining': 'remaining'
+        'remaining': 'remaining',
+        'clock_sync': 'clock_sync'
     }
 
-    def __init__(self, id=None, generator_id=None, active=None, flow_counters=None, flows=None, protocol_counters=None, remaining=None):  # noqa: E501
+    def __init__(self, id=None, generator_id=None, active=None, flow_counters=None, flows=None, protocol_counters=None, remaining=None, clock_sync=None):  # noqa: E501
         """PacketGeneratorResult - a model defined in Swagger"""  # noqa: E501
 
         self._id = None
@@ -60,6 +62,7 @@ class PacketGeneratorResult(object):
         self._flows = None
         self._protocol_counters = None
         self._remaining = None
+        self._clock_sync = None
         self.discriminator = None
 
         self.id = id
@@ -71,6 +74,8 @@ class PacketGeneratorResult(object):
         self.protocol_counters = protocol_counters
         if remaining is not None:
             self.remaining = remaining
+        if clock_sync is not None:
+            self.clock_sync = clock_sync
 
     @property
     def id(self):
@@ -219,6 +224,26 @@ class PacketGeneratorResult(object):
         :type: TrafficDurationRemainder
         """
         self._remaining = remaining
+
+    @property
+    def clock_sync(self):
+        """Gets the clock_sync of this PacketGeneratorResult.  # noqa: E501
+
+
+        :return: The clock_sync of this PacketGeneratorResult.  # noqa: E501
+        :rtype: PacketGeneratorResultClockSync
+        """
+        return self._clock_sync
+
+    @clock_sync.setter
+    def clock_sync(self, clock_sync):
+        """Sets the clock_sync of this PacketGeneratorResult.
+
+
+        :param clock_sync: The clock_sync of this PacketGeneratorResult.  # noqa: E501
+        :type: PacketGeneratorResultClockSync
+        """
+        self._clock_sync = clock_sync
 
     def to_dict(self):
         """Returns the model properties as a dict"""

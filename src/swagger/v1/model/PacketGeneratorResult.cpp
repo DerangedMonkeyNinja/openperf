@@ -24,6 +24,7 @@ PacketGeneratorResult::PacketGeneratorResult()
     m_Generator_idIsSet = false;
     m_Active = false;
     m_RemainingIsSet = false;
+    m_Clock_syncIsSet = false;
     
 }
 
@@ -60,6 +61,10 @@ nlohmann::json PacketGeneratorResult::toJson() const
     {
         val["remaining"] = ModelBase::toJson(m_Remaining);
     }
+    if(m_Clock_syncIsSet)
+    {
+        val["clock_sync"] = ModelBase::toJson(m_Clock_sync);
+    }
     
 
     return val;
@@ -90,6 +95,16 @@ void PacketGeneratorResult::fromJson(nlohmann::json& val)
             std::shared_ptr<TrafficDurationRemainder> newItem(new TrafficDurationRemainder());
             newItem->fromJson(val["remaining"]);
             setRemaining( newItem );
+        }
+        
+    }
+    if(val.find("clock_sync") != val.end())
+    {
+        if(!val["clock_sync"].is_null())
+        {
+            std::shared_ptr<PacketGeneratorResult_clock_sync> newItem(new PacketGeneratorResult_clock_sync());
+            newItem->fromJson(val["clock_sync"]);
+            setClockSync( newItem );
         }
         
     }
@@ -170,6 +185,23 @@ bool PacketGeneratorResult::remainingIsSet() const
 void PacketGeneratorResult::unsetRemaining()
 {
     m_RemainingIsSet = false;
+}
+std::shared_ptr<PacketGeneratorResult_clock_sync> PacketGeneratorResult::getClockSync() const
+{
+    return m_Clock_sync;
+}
+void PacketGeneratorResult::setClockSync(std::shared_ptr<PacketGeneratorResult_clock_sync> value)
+{
+    m_Clock_sync = value;
+    m_Clock_syncIsSet = true;
+}
+bool PacketGeneratorResult::clockSyncIsSet() const
+{
+    return m_Clock_syncIsSet;
+}
+void PacketGeneratorResult::unsetClock_sync()
+{
+    m_Clock_syncIsSet = false;
 }
 
 }

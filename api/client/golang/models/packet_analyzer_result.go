@@ -7,6 +7,7 @@ package models
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
@@ -25,6 +26,9 @@ type PacketAnalyzerResult struct {
 
 	// Unique analyzer identifier that generated this result
 	AnalyzerID string `json:"analyzer_id,omitempty"`
+
+	// clock sync
+	ClockSync *PacketAnalyzerResultClockSync `json:"clock_sync,omitempty"`
 
 	// flow counters
 	// Required: true
@@ -55,6 +59,10 @@ func (m *PacketAnalyzerResult) Validate(formats strfmt.Registry) error {
 		res = append(res, err)
 	}
 
+	if err := m.validateClockSync(formats); err != nil {
+		res = append(res, err)
+	}
+
 	if err := m.validateFlowCounters(formats); err != nil {
 		res = append(res, err)
 	}
@@ -81,6 +89,23 @@ func (m *PacketAnalyzerResult) validateActive(formats strfmt.Registry) error {
 
 	if err := validate.Required("active", "body", m.Active); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (m *PacketAnalyzerResult) validateClockSync(formats strfmt.Registry) error {
+	if swag.IsZero(m.ClockSync) { // not required
+		return nil
+	}
+
+	if m.ClockSync != nil {
+		if err := m.ClockSync.Validate(formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("clock_sync")
+			}
+			return err
+		}
 	}
 
 	return nil
@@ -152,6 +177,10 @@ func (m *PacketAnalyzerResult) validateProtocolCounters(formats strfmt.Registry)
 func (m *PacketAnalyzerResult) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
 	var res []error
 
+	if err := m.contextValidateClockSync(ctx, formats); err != nil {
+		res = append(res, err)
+	}
+
 	if err := m.contextValidateFlowCounters(ctx, formats); err != nil {
 		res = append(res, err)
 	}
@@ -167,6 +196,20 @@ func (m *PacketAnalyzerResult) ContextValidate(ctx context.Context, formats strf
 	if len(res) > 0 {
 		return errors.CompositeValidationError(res...)
 	}
+	return nil
+}
+
+func (m *PacketAnalyzerResult) contextValidateClockSync(ctx context.Context, formats strfmt.Registry) error {
+
+	if m.ClockSync != nil {
+		if err := m.ClockSync.ContextValidate(ctx, formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("clock_sync")
+			}
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -223,6 +266,143 @@ func (m *PacketAnalyzerResult) MarshalBinary() ([]byte, error) {
 // UnmarshalBinary interface implementation
 func (m *PacketAnalyzerResult) UnmarshalBinary(b []byte) error {
 	var res PacketAnalyzerResult
+	if err := swag.ReadJSON(b, &res); err != nil {
+		return err
+	}
+	*m = res
+	return nil
+}
+
+// PacketAnalyzerResultClockSync Clock sync statistics for analyzer
+//
+// swagger:model PacketAnalyzerResultClockSync
+type PacketAnalyzerResultClockSync struct {
+
+	// summary
+	// Required: true
+	Summary *PacketAnalyzerFlowSummaryCounters `json:"summary"`
+
+	// Clock sync error measurement units
+	// Required: true
+	// Enum: [nanoseconds]
+	Units *string `json:"units"`
+}
+
+// Validate validates this packet analyzer result clock sync
+func (m *PacketAnalyzerResultClockSync) Validate(formats strfmt.Registry) error {
+	var res []error
+
+	if err := m.validateSummary(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateUnits(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if len(res) > 0 {
+		return errors.CompositeValidationError(res...)
+	}
+	return nil
+}
+
+func (m *PacketAnalyzerResultClockSync) validateSummary(formats strfmt.Registry) error {
+
+	if err := validate.Required("clock_sync"+"."+"summary", "body", m.Summary); err != nil {
+		return err
+	}
+
+	if m.Summary != nil {
+		if err := m.Summary.Validate(formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("clock_sync" + "." + "summary")
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+var packetAnalyzerResultClockSyncTypeUnitsPropEnum []interface{}
+
+func init() {
+	var res []string
+	if err := json.Unmarshal([]byte(`["nanoseconds"]`), &res); err != nil {
+		panic(err)
+	}
+	for _, v := range res {
+		packetAnalyzerResultClockSyncTypeUnitsPropEnum = append(packetAnalyzerResultClockSyncTypeUnitsPropEnum, v)
+	}
+}
+
+const (
+
+	// PacketAnalyzerResultClockSyncUnitsNanoseconds captures enum value "nanoseconds"
+	PacketAnalyzerResultClockSyncUnitsNanoseconds string = "nanoseconds"
+)
+
+// prop value enum
+func (m *PacketAnalyzerResultClockSync) validateUnitsEnum(path, location string, value string) error {
+	if err := validate.EnumCase(path, location, value, packetAnalyzerResultClockSyncTypeUnitsPropEnum, true); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *PacketAnalyzerResultClockSync) validateUnits(formats strfmt.Registry) error {
+
+	if err := validate.Required("clock_sync"+"."+"units", "body", m.Units); err != nil {
+		return err
+	}
+
+	// value enum
+	if err := m.validateUnitsEnum("clock_sync"+"."+"units", "body", *m.Units); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ContextValidate validate this packet analyzer result clock sync based on the context it is used
+func (m *PacketAnalyzerResultClockSync) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+	var res []error
+
+	if err := m.contextValidateSummary(ctx, formats); err != nil {
+		res = append(res, err)
+	}
+
+	if len(res) > 0 {
+		return errors.CompositeValidationError(res...)
+	}
+	return nil
+}
+
+func (m *PacketAnalyzerResultClockSync) contextValidateSummary(ctx context.Context, formats strfmt.Registry) error {
+
+	if m.Summary != nil {
+		if err := m.Summary.ContextValidate(ctx, formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("clock_sync" + "." + "summary")
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+// MarshalBinary interface implementation
+func (m *PacketAnalyzerResultClockSync) MarshalBinary() ([]byte, error) {
+	if m == nil {
+		return nil, nil
+	}
+	return swag.WriteJSON(m)
+}
+
+// UnmarshalBinary interface implementation
+func (m *PacketAnalyzerResultClockSync) UnmarshalBinary(b []byte) error {
+	var res PacketAnalyzerResultClockSync
 	if err := swag.ReadJSON(b, &res); err != nil {
 		return err
 	}

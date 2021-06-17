@@ -25,6 +25,7 @@
 #include "PacketGeneratorProtocolCounters.h"
 #include <string>
 #include "PacketGeneratorFlowCounters.h"
+#include "PacketGeneratorResult_clock_sync.h"
 #include <vector>
 
 namespace swagger {
@@ -90,6 +91,13 @@ public:
     void setRemaining(std::shared_ptr<TrafficDurationRemainder> value);
     bool remainingIsSet() const;
     void unsetRemaining();
+    /// <summary>
+    /// 
+    /// </summary>
+    std::shared_ptr<PacketGeneratorResult_clock_sync> getClockSync() const;
+    void setClockSync(std::shared_ptr<PacketGeneratorResult_clock_sync> value);
+    bool clockSyncIsSet() const;
+    void unsetClock_sync();
 
 protected:
     std::string m_Id;
@@ -106,6 +114,8 @@ protected:
 
     std::shared_ptr<TrafficDurationRemainder> m_Remaining;
     bool m_RemainingIsSet;
+    std::shared_ptr<PacketGeneratorResult_clock_sync> m_Clock_sync;
+    bool m_Clock_syncIsSet;
 };
 
 }

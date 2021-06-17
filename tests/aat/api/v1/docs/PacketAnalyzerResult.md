@@ -10,6 +10,7 @@ Name | Type | Description | Notes
 **flow_counters** | [**PacketAnalyzerFlowCounters**](PacketAnalyzerFlowCounters.md) |  | 
 **flow_digests** | [**PacketAnalyzerFlowDigests**](PacketAnalyzerFlowDigests.md) |  | [optional] 
 **flows** | **list[str]** | List of unique flow ids included in stats. Individual flow statistics may be queried via the &#x60;rx-flows&#x60; endpoint.  | [optional] 
+**clock_sync** | [**PacketAnalyzerResultClockSync**](PacketAnalyzerResultClockSync.md) |  | [optional] 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

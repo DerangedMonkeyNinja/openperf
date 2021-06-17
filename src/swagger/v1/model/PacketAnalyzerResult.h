@@ -26,6 +26,7 @@
 #include "PacketAnalyzerFlowCounters.h"
 #include <vector>
 #include "PacketAnalyzerProtocolCounters.h"
+#include "PacketAnalyzerResult_clock_sync.h"
 
 namespace swagger {
 namespace v1 {
@@ -92,6 +93,13 @@ public:
     std::vector<std::string>& getFlows();
     bool flowsIsSet() const;
     void unsetFlows();
+    /// <summary>
+    /// 
+    /// </summary>
+    std::shared_ptr<PacketAnalyzerResult_clock_sync> getClockSync() const;
+    void setClockSync(std::shared_ptr<PacketAnalyzerResult_clock_sync> value);
+    bool clockSyncIsSet() const;
+    void unsetClock_sync();
 
 protected:
     std::string m_Id;
@@ -108,6 +116,8 @@ protected:
     bool m_Flow_digestsIsSet;
     std::vector<std::string> m_Flows;
     bool m_FlowsIsSet;
+    std::shared_ptr<PacketAnalyzerResult_clock_sync> m_Clock_sync;
+    bool m_Clock_syncIsSet;
 };
 
 }

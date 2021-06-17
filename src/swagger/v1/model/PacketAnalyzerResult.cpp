@@ -25,6 +25,7 @@ PacketAnalyzerResult::PacketAnalyzerResult()
     m_Active = false;
     m_Flow_digestsIsSet = false;
     m_FlowsIsSet = false;
+    m_Clock_syncIsSet = false;
     
 }
 
@@ -65,6 +66,10 @@ nlohmann::json PacketAnalyzerResult::toJson() const
             val["flows"] = jsonArray;
         }
     }
+    if(m_Clock_syncIsSet)
+    {
+        val["clock_sync"] = ModelBase::toJson(m_Clock_sync);
+    }
     
 
     return val;
@@ -100,6 +105,16 @@ void PacketAnalyzerResult::fromJson(nlohmann::json& val)
             
         }
         }
+    }
+    if(val.find("clock_sync") != val.end())
+    {
+        if(!val["clock_sync"].is_null())
+        {
+            std::shared_ptr<PacketAnalyzerResult_clock_sync> newItem(new PacketAnalyzerResult_clock_sync());
+            newItem->fromJson(val["clock_sync"]);
+            setClockSync( newItem );
+        }
+        
     }
     
 }
@@ -186,6 +201,23 @@ bool PacketAnalyzerResult::flowsIsSet() const
 void PacketAnalyzerResult::unsetFlows()
 {
     m_FlowsIsSet = false;
+}
+std::shared_ptr<PacketAnalyzerResult_clock_sync> PacketAnalyzerResult::getClockSync() const
+{
+    return m_Clock_sync;
+}
+void PacketAnalyzerResult::setClockSync(std::shared_ptr<PacketAnalyzerResult_clock_sync> value)
+{
+    m_Clock_sync = value;
+    m_Clock_syncIsSet = true;
+}
+bool PacketAnalyzerResult::clockSyncIsSet() const
+{
+    return m_Clock_syncIsSet;
+}
+void PacketAnalyzerResult::unsetClock_sync()
+{
+    m_Clock_syncIsSet = false;
 }
 
 }

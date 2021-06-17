@@ -7,6 +7,7 @@ package models
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
@@ -22,6 +23,9 @@ type PacketGeneratorResult struct {
 	// Indicates whether this result is currently being updated
 	// Required: true
 	Active *bool `json:"active"`
+
+	// clock sync
+	ClockSync *PacketGeneratorResultClockSync `json:"clock_sync,omitempty"`
 
 	// flow counters
 	// Required: true
@@ -56,6 +60,10 @@ func (m *PacketGeneratorResult) Validate(formats strfmt.Registry) error {
 		res = append(res, err)
 	}
 
+	if err := m.validateClockSync(formats); err != nil {
+		res = append(res, err)
+	}
+
 	if err := m.validateFlowCounters(formats); err != nil {
 		res = append(res, err)
 	}
@@ -86,6 +94,23 @@ func (m *PacketGeneratorResult) validateActive(formats strfmt.Registry) error {
 
 	if err := validate.Required("active", "body", m.Active); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (m *PacketGeneratorResult) validateClockSync(formats strfmt.Registry) error {
+	if swag.IsZero(m.ClockSync) { // not required
+		return nil
+	}
+
+	if m.ClockSync != nil {
+		if err := m.ClockSync.Validate(formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("clock_sync")
+			}
+			return err
+		}
 	}
 
 	return nil
@@ -166,6 +191,10 @@ func (m *PacketGeneratorResult) validateRemaining(formats strfmt.Registry) error
 func (m *PacketGeneratorResult) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
 	var res []error
 
+	if err := m.contextValidateClockSync(ctx, formats); err != nil {
+		res = append(res, err)
+	}
+
 	if err := m.contextValidateFlowCounters(ctx, formats); err != nil {
 		res = append(res, err)
 	}
@@ -181,6 +210,20 @@ func (m *PacketGeneratorResult) ContextValidate(ctx context.Context, formats str
 	if len(res) > 0 {
 		return errors.CompositeValidationError(res...)
 	}
+	return nil
+}
+
+func (m *PacketGeneratorResult) contextValidateClockSync(ctx context.Context, formats strfmt.Registry) error {
+
+	if m.ClockSync != nil {
+		if err := m.ClockSync.ContextValidate(ctx, formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("clock_sync")
+			}
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -237,6 +280,264 @@ func (m *PacketGeneratorResult) MarshalBinary() ([]byte, error) {
 // UnmarshalBinary interface implementation
 func (m *PacketGeneratorResult) UnmarshalBinary(b []byte) error {
 	var res PacketGeneratorResult
+	if err := swag.ReadJSON(b, &res); err != nil {
+		return err
+	}
+	*m = res
+	return nil
+}
+
+// PacketGeneratorResultClockSync Clock sync statistics for generator
+//
+// swagger:model PacketGeneratorResultClockSync
+type PacketGeneratorResultClockSync struct {
+
+	// summary
+	// Required: true
+	Summary *PacketGeneratorResultClockSyncSummary `json:"summary"`
+
+	// clock sync error measurement units
+	// Required: true
+	// Enum: [nanoseconds]
+	Units *string `json:"units"`
+}
+
+// Validate validates this packet generator result clock sync
+func (m *PacketGeneratorResultClockSync) Validate(formats strfmt.Registry) error {
+	var res []error
+
+	if err := m.validateSummary(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateUnits(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if len(res) > 0 {
+		return errors.CompositeValidationError(res...)
+	}
+	return nil
+}
+
+func (m *PacketGeneratorResultClockSync) validateSummary(formats strfmt.Registry) error {
+
+	if err := validate.Required("clock_sync"+"."+"summary", "body", m.Summary); err != nil {
+		return err
+	}
+
+	if m.Summary != nil {
+		if err := m.Summary.Validate(formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("clock_sync" + "." + "summary")
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+var packetGeneratorResultClockSyncTypeUnitsPropEnum []interface{}
+
+func init() {
+	var res []string
+	if err := json.Unmarshal([]byte(`["nanoseconds"]`), &res); err != nil {
+		panic(err)
+	}
+	for _, v := range res {
+		packetGeneratorResultClockSyncTypeUnitsPropEnum = append(packetGeneratorResultClockSyncTypeUnitsPropEnum, v)
+	}
+}
+
+const (
+
+	// PacketGeneratorResultClockSyncUnitsNanoseconds captures enum value "nanoseconds"
+	PacketGeneratorResultClockSyncUnitsNanoseconds string = "nanoseconds"
+)
+
+// prop value enum
+func (m *PacketGeneratorResultClockSync) validateUnitsEnum(path, location string, value string) error {
+	if err := validate.EnumCase(path, location, value, packetGeneratorResultClockSyncTypeUnitsPropEnum, true); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *PacketGeneratorResultClockSync) validateUnits(formats strfmt.Registry) error {
+
+	if err := validate.Required("clock_sync"+"."+"units", "body", m.Units); err != nil {
+		return err
+	}
+
+	// value enum
+	if err := m.validateUnitsEnum("clock_sync"+"."+"units", "body", *m.Units); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ContextValidate validate this packet generator result clock sync based on the context it is used
+func (m *PacketGeneratorResultClockSync) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+	var res []error
+
+	if err := m.contextValidateSummary(ctx, formats); err != nil {
+		res = append(res, err)
+	}
+
+	if len(res) > 0 {
+		return errors.CompositeValidationError(res...)
+	}
+	return nil
+}
+
+func (m *PacketGeneratorResultClockSync) contextValidateSummary(ctx context.Context, formats strfmt.Registry) error {
+
+	if m.Summary != nil {
+		if err := m.Summary.ContextValidate(ctx, formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("clock_sync" + "." + "summary")
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+// MarshalBinary interface implementation
+func (m *PacketGeneratorResultClockSync) MarshalBinary() ([]byte, error) {
+	if m == nil {
+		return nil, nil
+	}
+	return swag.WriteJSON(m)
+}
+
+// UnmarshalBinary interface implementation
+func (m *PacketGeneratorResultClockSync) UnmarshalBinary(b []byte) error {
+	var res PacketGeneratorResultClockSync
+	if err := swag.ReadJSON(b, &res); err != nil {
+		return err
+	}
+	*m = res
+	return nil
+}
+
+// PacketGeneratorResultClockSyncSummary Summary results for clock sync error statistics
+//
+// swagger:model PacketGeneratorResultClockSyncSummary
+type PacketGeneratorResultClockSyncSummary struct {
+
+	// Maximum value
+	// Minimum: 0
+	Max *int64 `json:"max,omitempty"`
+
+	// Minimum value
+	// Minimum: 0
+	Min *int64 `json:"min,omitempty"`
+
+	// Standard deviation of received values
+	// Minimum: 0
+	StdDev *int64 `json:"std_dev,omitempty"`
+
+	// Sum of all received values
+	// Required: true
+	// Minimum: 0
+	Total *int64 `json:"total"`
+}
+
+// Validate validates this packet generator result clock sync summary
+func (m *PacketGeneratorResultClockSyncSummary) Validate(formats strfmt.Registry) error {
+	var res []error
+
+	if err := m.validateMax(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateMin(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateStdDev(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateTotal(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if len(res) > 0 {
+		return errors.CompositeValidationError(res...)
+	}
+	return nil
+}
+
+func (m *PacketGeneratorResultClockSyncSummary) validateMax(formats strfmt.Registry) error {
+	if swag.IsZero(m.Max) { // not required
+		return nil
+	}
+
+	if err := validate.MinimumInt("clock_sync"+"."+"summary"+"."+"max", "body", *m.Max, 0, false); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *PacketGeneratorResultClockSyncSummary) validateMin(formats strfmt.Registry) error {
+	if swag.IsZero(m.Min) { // not required
+		return nil
+	}
+
+	if err := validate.MinimumInt("clock_sync"+"."+"summary"+"."+"min", "body", *m.Min, 0, false); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *PacketGeneratorResultClockSyncSummary) validateStdDev(formats strfmt.Registry) error {
+	if swag.IsZero(m.StdDev) { // not required
+		return nil
+	}
+
+	if err := validate.MinimumInt("clock_sync"+"."+"summary"+"."+"std_dev", "body", *m.StdDev, 0, false); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *PacketGeneratorResultClockSyncSummary) validateTotal(formats strfmt.Registry) error {
+
+	if err := validate.Required("clock_sync"+"."+"summary"+"."+"total", "body", m.Total); err != nil {
+		return err
+	}
+
+	if err := validate.MinimumInt("clock_sync"+"."+"summary"+"."+"total", "body", *m.Total, 0, false); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ContextValidate validates this packet generator result clock sync summary based on context it is used
+func (m *PacketGeneratorResultClockSyncSummary) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+	return nil
+}
+
+// MarshalBinary interface implementation
+func (m *PacketGeneratorResultClockSyncSummary) MarshalBinary() ([]byte, error) {
+	if m == nil {
+		return nil, nil
+	}
+	return swag.WriteJSON(m)
+}
+
+// UnmarshalBinary interface implementation
+func (m *PacketGeneratorResultClockSyncSummary) UnmarshalBinary(b []byte) error {
+	var res PacketGeneratorResultClockSyncSummary
 	if err := swag.ReadJSON(b, &res); err != nil {
 		return err
 	}

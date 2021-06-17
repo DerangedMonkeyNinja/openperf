@@ -37,7 +37,8 @@ class PacketAnalyzerResult(object):
         'protocol_counters': 'PacketAnalyzerProtocolCounters',
         'flow_counters': 'PacketAnalyzerFlowCounters',
         'flow_digests': 'PacketAnalyzerFlowDigests',
-        'flows': 'list[str]'
+        'flows': 'list[str]',
+        'clock_sync': 'PacketAnalyzerResultClockSync'
     }
 
     attribute_map = {
@@ -47,10 +48,11 @@ class PacketAnalyzerResult(object):
         'protocol_counters': 'protocol_counters',
         'flow_counters': 'flow_counters',
         'flow_digests': 'flow_digests',
-        'flows': 'flows'
+        'flows': 'flows',
+        'clock_sync': 'clock_sync'
     }
 
-    def __init__(self, id=None, analyzer_id=None, active=None, protocol_counters=None, flow_counters=None, flow_digests=None, flows=None):  # noqa: E501
+    def __init__(self, id=None, analyzer_id=None, active=None, protocol_counters=None, flow_counters=None, flow_digests=None, flows=None, clock_sync=None):  # noqa: E501
         """PacketAnalyzerResult - a model defined in Swagger"""  # noqa: E501
 
         self._id = None
@@ -60,6 +62,7 @@ class PacketAnalyzerResult(object):
         self._flow_counters = None
         self._flow_digests = None
         self._flows = None
+        self._clock_sync = None
         self.discriminator = None
 
         self.id = id
@@ -72,6 +75,8 @@ class PacketAnalyzerResult(object):
             self.flow_digests = flow_digests
         if flows is not None:
             self.flows = flows
+        if clock_sync is not None:
+            self.clock_sync = clock_sync
 
     @property
     def id(self):
@@ -220,6 +225,26 @@ class PacketAnalyzerResult(object):
         :type: list[str]
         """
         self._flows = flows
+
+    @property
+    def clock_sync(self):
+        """Gets the clock_sync of this PacketAnalyzerResult.  # noqa: E501
+
+
+        :return: The clock_sync of this PacketAnalyzerResult.  # noqa: E501
+        :rtype: PacketAnalyzerResultClockSync
+        """
+        return self._clock_sync
+
+    @clock_sync.setter
+    def clock_sync(self, clock_sync):
+        """Sets the clock_sync of this PacketAnalyzerResult.
+
+
+        :param clock_sync: The clock_sync of this PacketAnalyzerResult.  # noqa: E501
+        :type: PacketAnalyzerResultClockSync
+        """
+        self._clock_sync = clock_sync
 
     def to_dict(self):
         """Returns the model properties as a dict"""
