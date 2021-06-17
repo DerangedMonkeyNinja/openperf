@@ -9,6 +9,7 @@ TS_SOURCES += \
 	chrono.cpp \
 	clock.cpp \
 	counter_system.cpp \
+	error_tracker.cpp \
 	init.cpp \
 	handler.cpp \
 	history.cpp \

@@ -91,7 +91,10 @@ void keeper::setup(counter::timecounter* tc)
     m_idx++;
 }
 
-int keeper::sync(const bintime& timestamp, counter::ticks t, counter::hz freq)
+int keeper::sync(const bintime& timestamp,
+                 counter::ticks t,
+                 counter::hz freq,
+                 uint64_t error)
 {
     timehands *th = nullptr, *th_next = nullptr;
     unsigned gen = 0, gen_next = 0;
@@ -125,6 +128,7 @@ int keeper::sync(const bintime& timestamp, counter::ticks t, counter::hz freq)
         th_next->t_zero = t;
         th_next->t_lerp = t; /* might not need to lerp */
         th_next->ref.freq = freq;
+        th_next->ref.error = error;
         th_next->ref.scalar = ((1ULL << 63) / freq.count()) << 1;
         th_next->lerp = th_next->ref;
 
@@ -148,6 +152,8 @@ int keeper::sync(const bintime& timestamp, counter::ticks t, counter::hz freq)
                 th_next->lerp.offset = detail::time_at(*th, t);
                 th_next->lerp.freq = counter::hz{
                     static_cast<uint64_t>(freq.count() * (1 + slew))};
+                /* Divide slew by 1000 to convert ppm to ppb */
+                th_next->lerp.error = th_next->ref.error.value() + slew / 1000;
                 th_next->lerp.scalar =
                     ((1ULL << 63) / th_next->lerp.freq.count()) << 1;
 

@@ -62,7 +62,7 @@ static std::vector<timestamp> load_timestamps(std::string_view filename)
 }
 
 static int
-do_update(const bintime& time, counter::ticks ticks, counter::hz freq)
+do_update(const bintime& time, counter::ticks ticks, counter::hz freq, uint64_t)
 {
     static constexpr auto max_jump = 1ms;
     static bintime last_time = {};

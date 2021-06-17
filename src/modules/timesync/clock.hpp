@@ -16,8 +16,10 @@ namespace openperf::timesync {
 class clock
 {
 public:
-    using update_function = std::function<int(
-        const bintime& time, counter::ticks ticks, counter::hz freq)>;
+    using update_function = std::function<int(const bintime& time,
+                                              counter::ticks ticks,
+                                              counter::hz freq,
+                                              uint64_t error)>;
     clock(update_function update);
 
     void reset();

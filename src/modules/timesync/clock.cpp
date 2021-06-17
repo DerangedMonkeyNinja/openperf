@@ -431,10 +431,10 @@ void clock::do_offset_sync(const timestamp& ts)
             theta, m_data.K, ts.Tf, get_value(m_data.f_hat.current));
 
         auto freq = (get_value(m_data.f_local.current) != counter::hz::zero()
-                         ? get_value(m_data.f_local.current)
-                         : get_value(m_data.f_hat.current));
+                         ? m_data.f_local.current
+                         : m_data.f_hat.current);
 
-        m_update(now, ts.Tf, freq);
+        m_update(now, ts.Tf, get_value(freq), get_error(freq));
         m_stats.last_update = ts.Tf;
     } else {
         OP_LOG(OP_LOG_WARNING,

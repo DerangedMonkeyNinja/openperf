@@ -262,19 +262,11 @@ reply_msg server::handle_request(const request_time_counters& request)
     return (reply);
 }
 
-static std::chrono::nanoseconds get_clock_error(const clock& c)
-{
-    auto error =
-        c.local_frequency_error().value_or(c.frequency_error().value_or(0));
-
-    return (chrono::maximum_clock_error(error));
-}
-
 reply_msg server::handle_request(const request_time_keeper&)
 {
     auto keeper = time_keeper{
         .ts = chrono::realtime::now(),
-        .ts_error = get_clock_error(*m_clock),
+        .ts_error = chrono::realtime::error().value_or(0s),
         .info = {.freq = m_clock->frequency(),
                  .freq_error = m_clock->frequency_error(),
                  .local_freq = m_clock->local_frequency(),
@@ -449,10 +441,12 @@ server::server(void* context, openperf::core::event_loop& loop)
     chrono::keeper::instance().setup(m_timecounters.front().get());
 
     /* Instantiate clock */
-    m_clock = std::make_unique<clock>(
-        [](const bintime& timestamp, counter::ticks ticks, counter::hz freq) {
-            return (chrono::keeper::instance().sync(timestamp, ticks, freq));
-        });
+    m_clock = std::make_unique<clock>([](const bintime& timestamp,
+                                         counter::ticks ticks,
+                                         counter::hz freq,
+                                         uint64_t error) {
+        return (chrono::keeper::instance().sync(timestamp, ticks, freq, error));
+    });
 
     /* Setup event loop */
     auto callbacks = op_event_callbacks{.on_read = handle_rpc_request};

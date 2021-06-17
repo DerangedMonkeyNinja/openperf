@@ -3,6 +3,7 @@
 
 #include <array>
 #include <chrono>
+#include <optional>
 
 #include "timesync/counter.hpp"
 #include "utils/singleton.hpp"
@@ -13,8 +14,9 @@ struct timehands_data
 {
     bintime offset;   /**< clock offset at reference tick value */
     counter::hz freq; /**< frequency to use for clock measurements */
-    uint64_t scalar;  /**< conversion factor for ticks --> bintime fraction
-                       * (1 << 64) / freq */
+    std::optional<uint64_t> error; /**< frequency error in parts per billion */
+    uint64_t scalar; /**< conversion factor for ticks --> bintime fraction
+                      * (1 << 64) / freq */
 };
 
 struct timehands
@@ -37,7 +39,10 @@ class keeper : public utils::singleton<keeper>
 
 public:
     void setup(counter::timecounter* tc);
-    int sync(const bintime& timestamp, counter::ticks ticks, counter::hz freq);
+    int sync(const bintime& timestamp,
+             counter::ticks ticks,
+             counter::hz freq,
+             uint64_t error);
     timehands* timehands_now() const;
 };
 
@@ -70,6 +75,28 @@ struct realtime
     using time_point = std::chrono::time_point<realtime, duration>;
 
     static constexpr bool is_steady = false;
+
+    static std::optional<duration> error() noexcept
+    {
+        timehands* th = nullptr;
+        auto ticks = counter::ticks{0};
+        auto gen = 0U;
+
+        do {
+            th = keeper::instance().timehands_now();
+            gen = th->generation.load(std::memory_order_consume);
+            ticks = th->counter->now();
+        } while (gen == 0
+                 || gen != th->generation.load(std::memory_order_consume));
+
+        assert(th);
+
+        const auto& data = (ticks < th->t_lerp ? th->lerp : th->ref);
+
+        if (data.error) { return (maximum_clock_error(data.error.value())); }
+
+        return (std::nullopt);
+    }
 
     static time_point now() noexcept
     {
