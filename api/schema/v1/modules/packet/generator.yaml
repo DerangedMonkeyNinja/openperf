@@ -660,6 +660,44 @@ definitions:
         $ref: "#/definitions/PacketGeneratorProtocolCounters"
       remaining:
         $ref: "#/definitions/TrafficDurationRemainder"
+      clock_sync:
+        type: object
+        description: Clock sync statistics for generator
+        properties:
+          summary:
+            type: object
+            description: Summary results for clock sync error statistics
+            properties:
+              min:
+                type: integer
+                description: Minimum value
+                format: int64
+                minimum: 0
+              max:
+                type: integer
+                description: Maximum value
+                format: int64
+                minimum: 0
+              total:
+                type: integer
+                description: Sum of all received values
+                format: int64
+                minimum: 0
+              std_dev:
+                type: integer
+                description: Standard deviation of received values
+                format: int64
+                minimum: 0
+            required:
+              - total
+          units:
+            type: string
+            description: clock sync error measurement units
+            enum:
+              - nanoseconds
+        required:
+          - summary
+          - units
     required:
       - id
       - active

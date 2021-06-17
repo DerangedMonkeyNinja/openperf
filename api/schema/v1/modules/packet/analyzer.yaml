@@ -525,6 +525,20 @@ definitions:
           statistics may be queried via the `rx-flows` endpoint.
         items:
           type: string
+      clock_sync:
+        type: object
+        description: Clock sync statistics for analyzer
+        properties:
+          summary:
+            $ref: "#/definitions/PacketAnalyzerFlowSummaryCounters"
+          units:
+            type: string
+            description: Clock sync error measurement units
+            enum:
+              - nanoseconds
+        required:
+          - summary
+          - units
     required:
       - id
       - active
