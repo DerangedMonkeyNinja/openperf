@@ -13,6 +13,7 @@
 #include "swagger/v1/model/PacketAnalyzerResult.h"
 #include "swagger/v1/model/RxFlow.h"
 
+#include "timesync/error_tracker.hpp"
 #include "utils/overloaded_visitor.hpp"
 
 namespace openperf::packet::analyzer::api {
@@ -584,7 +585,22 @@ to_swagger(const statistics::generic_flow_digests& src)
     return (dst);
 }
 
-analyzer_result_ptr to_swagger(const core::uuid& id, const sink_result& src)
+static std::shared_ptr<swagger::v1::model::PacketAnalyzerResult_clock_sync>
+to_swagger(const timesync::error_tracker& error)
+{
+    static const std::string ns = "nanoseconds";
+
+    auto dst =
+        std::make_unique<swagger::v1::model::PacketAnalyzerResult_clock_sync>();
+    dst->setSummary(to_swagger(error, error.count));
+    dst->setUnits(ns);
+    return (dst);
+}
+
+analyzer_result_ptr
+to_swagger(const core::uuid& id,
+           const sink_result& src,
+           const std::optional<timesync::error_tracker>& error)
 {
     auto dst = std::make_unique<swagger::v1::model::PacketAnalyzerResult>();
 
@@ -618,6 +634,8 @@ analyzer_result_ptr to_swagger(const core::uuid& id, const sink_result& src)
     }
 
     to_swagger(id, src.flows(), dst->getFlows());
+
+    if (error) { dst->setClockSync(to_swagger(error.value())); }
 
     return (dst);
 }

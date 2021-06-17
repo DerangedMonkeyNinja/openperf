@@ -157,7 +157,7 @@ static std::string to_string(const reply_msg& reply)
 
 static int handle_rpc_request(const op_event_data* data, void* arg)
 {
-    auto s = reinterpret_cast<server*>(arg);
+    auto* s = reinterpret_cast<server*>(arg);
 
     auto reply_errors = 0;
     while (auto request = message::recv(data->socket, ZMQ_DONTWAIT)
@@ -189,6 +189,16 @@ static int handle_rpc_request(const op_event_data* data, void* arg)
     return ((reply_errors || errno == ETERM) ? -1 : 0);
 }
 
+static int handle_clock_error_polling(const op_event_data*, void* arg)
+{
+    auto* s = reinterpret_cast<server*>(arg);
+    if (auto error = timesync::chrono::realtime::error()) {
+        s->update_clock_errors(error.value());
+    }
+
+    return (0);
+}
+
 /**
  * Implementation
  **/
@@ -199,8 +209,16 @@ server::server(void* context, core::event_loop& loop)
     , m_socket(op_socket_get_server(context, ZMQ_REP, endpoint.data()))
 {
     /* Setup event loop */
-    auto callbacks = op_event_callbacks{.on_read = handle_rpc_request};
-    m_loop.add(m_socket.get(), &callbacks, this);
+    auto rpc_callback = op_event_callbacks{.on_read = handle_rpc_request};
+    m_loop.add(m_socket.get(), &rpc_callback, this);
+
+    auto error_callback =
+        op_event_callbacks{.on_timeout = handle_clock_error_polling};
+
+    using namespace std::chrono_literals;
+    static constexpr auto timeout =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(100ms);
+    m_loop.add(static_cast<uint64_t>(timeout.count()), &error_callback, this);
 }
 
 reply_msg server::handle_request(const request_list_analyzers& request)
@@ -416,6 +434,17 @@ template <typename Map> static core::uuid get_unique_result_id(const Map& map)
     return (id);
 }
 
+template <typename Map>
+static std::optional<timesync::error_tracker> get_error(const core::uuid& uuid,
+                                                        const Map& map)
+{
+    if (auto cursor = map.find(uuid); cursor != std::end(map)) {
+        return (*(cursor->second));
+    }
+
+    return (std::nullopt);
+}
+
 reply_msg server::handle_request(const request_reset_analyzer& request)
 {
     const auto found = binary_find(std::begin(m_sinks),
@@ -440,7 +469,8 @@ reply_msg server::handle_request(const request_reset_analyzer& request)
     impl.reset(result.get());
 
     auto reply = reply_analyzer_results{};
-    reply.analyzer_results.emplace_back(to_swagger(id, *result));
+    reply.analyzer_results.emplace_back(
+        to_swagger(id, *result, get_error(id, m_clock_errors)));
     return (reply);
 }
 
@@ -468,7 +498,8 @@ reply_msg server::handle_request(const request_start_analyzer& request)
     impl.start(result.get());
 
     auto reply = reply_analyzer_results{};
-    reply.analyzer_results.emplace_back(to_swagger(id, *result));
+    reply.analyzer_results.emplace_back(
+        to_swagger(id, *result, get_error(id, m_clock_errors)));
     return (reply);
 }
 
@@ -608,8 +639,10 @@ reply_msg server::handle_request(const request_list_analyzer_results& request)
                  std::end(m_results),
                  std::back_inserter(reply.analyzer_results),
                  compare,
-                 [](const auto& item) {
-                     return (to_swagger(item.first, *item.second));
+                 [&](const auto& item) {
+                     return (to_swagger(item.first,
+                                        *item.second,
+                                        get_error(item.first, m_clock_errors)));
                  });
 
     return (reply);
@@ -635,9 +668,16 @@ reply_msg server::handle_request(const request_get_analyzer_result& request)
         return (to_error(error_type::NOT_FOUND));
     }
 
+    auto errors = m_clock_errors.find(*id);
+    if (errors != std::end(m_clock_errors)) {
+        timesync::dump(*(errors->second));
+    }
+
     auto reply = reply_analyzer_results{};
     reply.analyzer_results.emplace_back(
-        to_swagger(result->first, *result->second));
+        to_swagger(result->first,
+                   *result->second,
+                   get_error(result->first, m_clock_errors)));
     return (reply);
 }
 
@@ -733,6 +773,36 @@ reply_msg server::handle_request(const request_get_rx_flow& request)
     auto reply = reply_rx_flows{};
     reply.flows.emplace_back(to_swagger(*id, it->first, *counters));
     return (reply);
+}
+
+void server::update_clock_errors(std::chrono::nanoseconds error)
+{
+    /* XXX: delete all errors trackers without matching analyzers. */
+    auto to_delete = std::vector<core::uuid>{};
+    std::for_each(std::begin(m_clock_errors),
+                  std::end(m_clock_errors),
+                  [&](const auto& pair) {
+                      if (m_results.find(pair.first) == std::end(m_results)) {
+                          to_delete.push_back(pair.first);
+                      }
+                  });
+    std::for_each(std::begin(to_delete),
+                  std::end(to_delete),
+                  [&](const auto& item) { m_clock_errors.erase(item); });
+
+    /* Update error stats for all active analyzers */
+    for (const auto& item : m_results) {
+        if (item.second->active()) {
+            auto cursor = m_clock_errors.find(item.first);
+            if (cursor == std::end(m_clock_errors)) {
+                auto result = m_clock_errors.emplace(
+                    item.first, std::make_unique<clock_error_type>());
+                assert(result.second);
+                cursor = result.first;
+            }
+            timesync::update(*(cursor->second), error);
+        }
+    }
 }
 
 } // namespace openperf::packet::analyzer::api

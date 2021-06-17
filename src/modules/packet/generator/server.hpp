@@ -8,6 +8,7 @@
 #include "packet/generator/api.hpp"
 #include "packet/generator/source.hpp"
 #include "packetio/internal_client.hpp"
+#include "timesync/error_tracker.hpp"
 
 namespace openperf::packet::generator::api {
 
@@ -46,6 +47,8 @@ public:
     reply_msg handle_request(const request_start_learning&);
     reply_msg handle_request(const request_stop_learning&);
 
+    void update_clock_errors(std::chrono::nanoseconds);
+
     /*
      * Source's know their own id's, so we don't need to store
      * them in a map.  Just use a (sorted) vector so we don't
@@ -63,6 +66,11 @@ public:
     using result_value_type = source_result;
     using result_value_ptr = std::unique_ptr<result_value_type>;
     using result_map = std::map<core::uuid, result_value_ptr>;
+
+    using clock_error_type = timesync::error_tracker;
+    using clock_error_ptr = std::unique_ptr<clock_error_type>;
+    using error_map = std::map<core::uuid, clock_error_ptr>;
+    error_map m_clock_errors;
 
 private:
     core::event_loop& m_loop;

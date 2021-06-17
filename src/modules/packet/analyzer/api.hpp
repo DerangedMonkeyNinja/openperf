@@ -14,6 +14,7 @@
 #include "packet/analyzer/statistics/generic_flow_counters.hpp"
 #include "packet/analyzer/statistics/generic_flow_digests.hpp"
 #include "packet/statistics/generic_protocol_counters.hpp"
+#include "timesync/error_tracker.hpp"
 
 namespace swagger::v1::model {
 
@@ -274,7 +275,10 @@ tl::expected<reply_msg, int> deserialize_reply(serialized_msg&& msg);
 reply_error to_error(error_type type, int value = 0);
 
 analyzer_ptr to_swagger(const sink&);
-analyzer_result_ptr to_swagger(const core::uuid& id, const sink_result& result);
+analyzer_result_ptr
+to_swagger(const core::uuid& id,
+           const sink_result& result,
+           const std::optional<timesync::error_tracker>& error);
 rx_flow_ptr to_swagger(const core::uuid& id,
                        const core::uuid& result_id,
                        const statistics::generic_flow_counters& counters);

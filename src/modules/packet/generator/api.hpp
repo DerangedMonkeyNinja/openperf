@@ -15,6 +15,7 @@
 #include "core/op_uuid.hpp"
 #include "packet/generator/traffic/sequence.hpp"
 #include "packet/statistics/generic_protocol_counters.hpp"
+#include "timesync/error_tracker.hpp"
 #include "units/rate.hpp"
 
 namespace swagger::v1::model {
@@ -349,8 +350,10 @@ const char* to_string(const reply_error& error);
 
 generator_ptr to_swagger(const source&);
 
-generator_result_ptr to_swagger(const core::uuid& id,
-                                const source_result& result);
+generator_result_ptr
+to_swagger(const core::uuid& id,
+           const source_result& result,
+           const std::optional<timesync::error_tracker>& error);
 
 tx_flow_ptr to_swagger(const core::uuid& id,
                        const core::uuid& result_id,

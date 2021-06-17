@@ -11,6 +11,7 @@
 #include "swagger/v1/model/PacketGeneratorLearningResults.h"
 #include "swagger/v1/model/TxFlow.h"
 
+#include "timesync/error_tracker.hpp"
 #include "utils/overloaded_visitor.hpp"
 
 namespace openperf::packet::generator::api {
@@ -170,8 +171,42 @@ static void populate_remainder(
     }
 }
 
-generator_result_ptr to_swagger(const core::uuid& id,
-                                const source_result& result)
+static std::shared_ptr<swagger::v1::model::PacketGeneratorResult_clock_sync>
+to_swagger(const timesync::error_tracker& error)
+{
+    static const std::string ns = "nanoseconds";
+
+    auto dst = std::make_shared<
+        swagger::v1::model::PacketGeneratorResult_clock_sync>();
+
+    auto summary = std::make_shared<
+        swagger::v1::model::PacketGeneratorResult_clock_sync_summary>();
+
+    summary->setTotal(error.total.count());
+    if (error.total.count()) {
+        summary->setMin(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(error.min)
+                .count());
+        summary->setMax(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(error.max)
+                .count());
+        if (error.min.count() != error.max.count()) {
+            summary->setStdDev(std::sqrt(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(error.m2)
+                    .count()
+                / (error.count - 1)));
+        }
+    }
+
+    dst->setSummary(summary);
+    dst->setUnits(ns);
+    return (dst);
+}
+
+generator_result_ptr
+to_swagger(const core::uuid& id,
+           const source_result& result,
+           const std::optional<timesync::error_tracker>& error)
 {
     auto dst = std::make_unique<swagger::v1::model::PacketGeneratorResult>();
 
@@ -207,6 +242,8 @@ generator_result_ptr to_swagger(const core::uuid& id,
         std::back_inserter(dst->getFlows()), result.flows().size(), [&]() {
             return (core::to_string(tx_flow_id(id, flow_idx++)));
         });
+
+    if (error) { dst->setClockSync(to_swagger(error.value())); }
 
     return (dst);
 }

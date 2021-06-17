@@ -8,6 +8,7 @@
 #include "packet/analyzer/api.hpp"
 #include "packet/analyzer/sink.hpp"
 #include "packetio/internal_client.hpp"
+#include "timesync/error_tracker.hpp"
 
 namespace openperf::packet::analyzer::api {
 
@@ -38,6 +39,11 @@ class server
     /* result id --> result */
     result_map m_results;
 
+    using clock_error_type = timesync::error_tracker;
+    using clock_error_ptr = std::unique_ptr<clock_error_type>;
+    using error_map = std::map<core::uuid, clock_error_ptr>;
+    error_map m_clock_errors;
+
 public:
     server(void* context, core::event_loop& loop);
 
@@ -64,6 +70,8 @@ public:
 
     reply_msg handle_request(const request_list_rx_flows&);
     reply_msg handle_request(const request_get_rx_flow&);
+
+    void update_clock_errors(std::chrono::nanoseconds);
 };
 
 } // namespace openperf::packet::analyzer::api
